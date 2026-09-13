@@ -182,6 +182,7 @@ final class AppStore {
     var earlyResetEvents: [String: EarlyQuotaResetEvent] = [:]
     var earlyResetHistory: [EarlyQuotaResetHistory.Summary] = []
     @ObservationIgnored var earlyQuotaResetMonitor = EarlyQuotaResetMonitor()
+    @ObservationIgnored var quotaCrossingMonitor = QuotaCrossingMonitor()
 
     var codexUsage: CodexUsage?
     var codexError: String?
@@ -2172,10 +2173,15 @@ final class AppStore {
         let warnings: [QuotaWarning]   // sorted desc by percent
     }
 
-    var aggregateQuotaStatus: AggregateQuotaStatus {
-        var providers: [QuotaWarning] = []
-        func include(_ name: String, _ windows: [QuotaWarning.Candidate]) {
-            if let worst = QuotaWarning.worst(name: name, windows: windows) { providers.append(worst) }
+    /// Every connected provider's quota windows, flattened. The warning banner
+    /// and the crossing notifier read the same list, so the two can never
+    /// disagree about what a provider is reporting.
+    var quotaWindows: [QuotaCrossingWindow] {
+        var windows: [QuotaCrossingWindow] = []
+        func include(_ name: String, _ candidates: [QuotaWarning.Candidate]) {
+            windows += candidates.map {
+                QuotaCrossingWindow(providerName: name, label: $0.label, percent: $0.percent, resetsAt: $0.resetsAt)
+            }
         }
         if let usage = subscription, shouldIncludeCachedQuota(loadState: subscriptionLoadState) {
             // Labelled as `claudeQuotaSummary` labels them, so the warning row
@@ -2217,6 +2223,19 @@ final class AppStore {
                 QuotaWarning.Candidate(label: $0.label, percent: $0.usedPercent, resetsAt: $0.resetsAt)
             })
         }
+        return windows
+    }
+
+    var aggregateQuotaStatus: AggregateQuotaStatus {
+        var order: [String] = []
+        var byProvider: [String: [QuotaWarning.Candidate]] = [:]
+        for window in quotaWindows {
+            if byProvider[window.providerName] == nil { order.append(window.providerName) }
+            byProvider[window.providerName, default: []].append(
+                .init(label: window.label, percent: window.percent, resetsAt: window.resetsAt)
+            )
+        }
+        let providers = order.compactMap { QuotaWarning.worst(name: $0, windows: byProvider[$0] ?? []) }
         let result = QuotaWarningPresentation.aggregate(providers)
         return AggregateQuotaStatus(severity: result.severity, warnings: result.warnings)
     }

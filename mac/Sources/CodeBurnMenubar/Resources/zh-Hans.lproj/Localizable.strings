@@ -695,3 +695,8 @@
 "%lldd ago" = "%lld 天前";
 "in under a minute" = "不到一分钟后";
 "Input tokens reused from this provider's prompt cache today — not fresh input (arrow.down), not cache writes, and already priced at the cache-read rate inside the burned figure." = "今天从该服务商提示缓存中复用的输入 Token。不是新的输入（arrow.down），也不是缓存写入，并且已按缓存读取费率计入已消耗金额。";
+
+/* MARK: Quota crossing notifications */
+"%@ · %@ at 80%%" = "%@ · %@ 已达 80%%";
+"%@ · %@ limit reached" = "%@ · %@ 已达上限";
+"Quota crossings (%lld%% and %lld%%)" = "配额跨越（%lld%% 与 %lld%%）";
