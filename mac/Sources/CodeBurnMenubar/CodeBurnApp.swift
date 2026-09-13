@@ -130,6 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        SingleInstanceGuard.retireOlderInstances()
         ProcessInfo.processInfo.automaticTerminationSupportEnabled = false
         ProcessInfo.processInfo.disableSuddenTermination()
         // Deliberately NO app-lifetime beginActivity here. A permanent
