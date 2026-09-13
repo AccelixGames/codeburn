@@ -642,21 +642,8 @@
 "Follows System Settings > Language & Region unless you pick one here." = "除非在此处选择，否则将跟随“系统设置 > 语言与地区”。";
 
 /* MARK: Quota pace captions (#1267) */
-"Limit reached" = "限额已用尽";
-"This window's limit is fully used. It resets in %@." = "该窗口的限额已全部用完，将在 %@后重置。";
 "On pace" = "符合节奏";
-"Lasts until reset" = "可支撑到重置";
-"Won't last until reset" = "撑不到重置";
-"Runs out in %@" = "%@后耗尽";
-"Estimated from the average pace across this whole %@ window so far — not a measured recent rate." = "根据整个 %@窗口至今的平均速度估算，而非最近实测的速率。";
-"At that pace the limit is reached in %@, before the reset in %@." = "按此速度，限额将在 %@后用尽，早于 %@后的重置。";
-"Projected %lld%% used by the reset — on pace." = "预计到重置时将用掉 %lld%% — 符合节奏。";
-"Projected %d%% used by the reset, %.0f%% ahead of the pace the elapsed window implies." = "预计到重置时将用掉 %d%%，比已过窗口所对应的节奏超出 %.0f%%。";
-"Projected %d%% used by the reset, %.0f%% of the window still in reserve." = "预计到重置时将用掉 %d%%，该窗口还有 %.0f%% 的结余。";
 "5-hour" = "5 小时";
-"7-day" = "7 天";
-"%lld-day" = "%lld 天";
-"%lld-hour" = "%lld 小时";
 "<1m" = "<1 分";
 
 /* MARK: Early quota reset (#725) */
