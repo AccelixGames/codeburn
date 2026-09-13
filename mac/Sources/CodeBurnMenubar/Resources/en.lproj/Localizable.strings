@@ -703,3 +703,8 @@
 "%lldd ago" = "%lldd ago";
 "in under a minute" = "in under a minute";
 "Input tokens reused from this provider's prompt cache today — not fresh input (arrow.down), not cache writes, and already priced at the cache-read rate inside the burned figure." = "Input tokens reused from this provider's prompt cache today — not fresh input (arrow.down), not cache writes, and already priced at the cache-read rate inside the burned figure.";
+
+/* MARK: Quota crossing notifications */
+"%@ · %@ at 80%%" = "%@ · %@ at 80%%";
+"%@ · %@ limit reached" = "%@ · %@ limit reached";
+"Quota crossings (%lld%% and %lld%%)" = "Quota crossings (%lld%% and %lld%%)";
