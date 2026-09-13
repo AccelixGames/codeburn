@@ -208,8 +208,9 @@ describe('collectKimicodeInputs', () => {
     }))
     await wire(live, 'main', NOW - 30_000, [
       { type: 'llm.request', model: 'k2', modelAlias: 'kimi-code/k2', time: NOW - 120_000 },
-      { type: 'llm.request', model: 'k3', modelAlias: 'kimi-code/k3', time: NOW - 30_000 },
+      { type: 'llm.request', model: 'k3', modelAlias: 'kimi-code/k3', maxTokens: 1_048_576, time: NOW - 30_000 },
       { type: 'usage.record', model: 'kimi-code/k3', usage: { output: 12 }, time: NOW - 30_000 },
+      { type: 'token_counting.measured', tokens: 664_620, time: NOW - 30_000 },
     ])
     await wire(live, 'agent-0', NOW - 5_000, [{ type: 'llm.request', model: 'k3' }])
 
@@ -230,8 +231,8 @@ describe('collectKimicodeInputs', () => {
       project: 'atlas',
       branch: null,
       model: 'k3',
-      contextTokens: null,
-      contextWindow: null,
+      contextTokens: 664_620,
+      contextWindow: 1_048_576,
       startedMs: NOW - 3_600_000,
       lastActivityMs: NOW - 30_000,
       subagentActivityMs: [NOW - 5_000],
