@@ -225,14 +225,16 @@ enum CapacityDockGlance {
     static let todayHeight: CGFloat = sectionPadTop + captionLine + pillGap
         + todayContentHeight + sectionPadBottom
 
-    /// Four bands, matching the rail's own sense of escalation: comfortable,
-    /// watch it, nearly out, over. Rings start green because a ring with no
-    /// colour reads as broken.
+    /// The menu-bar flame's bands, so the rail and the flame never disagree
+    /// about a window. Rings start green because a ring with no colour reads
+    /// as broken.
     static func severityColor(_ fraction: Double) -> Color {
-        if fraction >= 0.9 { return .red }
-        if fraction >= 0.8 { return .orange }
-        if fraction >= 0.7 { return .yellow }
-        return .green
+        switch QuotaSummary.severity(for: fraction) {
+        case .normal: .green
+        case .warning: .yellow
+        case .critical: .orange
+        case .danger: .red
+        }
     }
 
     /// Share of the pill the tint covers. Anything outside 0...1 is a bad
