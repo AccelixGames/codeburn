@@ -296,29 +296,40 @@ export async function collectLiveSessionInputs(
   return [...inputs.values(), ...await collectKimicodeInputs(nowMs, windowMs)]
 }
 
-/// Last model the session actually asked for. Tail-only, like the Claude
-/// scanner: a running wire file reaches tens of MB and only the end matters.
-async function kimicodeModel(wirePath: string): Promise<string | null> {
+/// What the tail of the main wire file says about the session: the model it
+/// last asked for, the context Kimi itself measured after the last turn, and
+/// the window it asked for. Tail-only, like the Claude scanner: a running wire
+/// file reaches tens of MB and only the end matters.
+async function kimicodeTail(wirePath: string): Promise<{ model: string | null; contextTokens: number | null; contextWindow: number | null }> {
+  const out = { model: null as string | null, contextTokens: null as number | null, contextWindow: null as number | null }
   let text = ''
   try {
     text = await readTail(wirePath, TAIL_BYTES)
   } catch {
-    return null
+    return out
   }
   const lines = text.split('\n')
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const line = lines[index]
     if (!line || !line.trim()) continue
-    let record: { type?: unknown; model?: unknown }
+    let record: { type?: unknown; model?: unknown; maxTokens?: unknown; tokens?: unknown }
     try {
-      record = JSON.parse(line) as { type?: unknown; model?: unknown }
+      record = JSON.parse(line) as typeof record
     } catch {
       continue
     }
-    if (record.type !== 'llm.request') continue
-    if (typeof record.model === 'string' && record.model) return record.model
+    if (record.type === 'llm.request' && out.model === null) {
+      if (typeof record.model === 'string' && record.model) out.model = record.model
+      if (typeof record.maxTokens === 'number' && record.maxTokens > 0) out.contextWindow = record.maxTokens
+    } else if (record.type === 'token_counting.measured' && out.contextTokens === null) {
+      if (typeof record.tokens === 'number' && record.tokens >= 0) out.contextTokens = record.tokens
+    }
+    if (out.model !== null && out.contextTokens !== null) break
   }
-  return null
+  // A measurement without a window (or the reverse) draws nothing; the app
+  // needs both to size the ring.
+  if (out.contextTokens === null || out.contextWindow === null) { out.contextTokens = null; out.contextWindow = null }
+  return out
 }
 
 /// Kimi Code keeps a directory per session, the session's own turns in
@@ -358,14 +369,15 @@ export async function collectKimicodeInputs(
     const birthtimeMs = state.createdAtMs
       ? 0
       : (await stat(join(sessionDir, 'state.json')).catch(() => null))?.birthtimeMs ?? 0
+    const tail = await kimicodeTail(join(sessionDir, 'agents', 'main', 'wire.jsonl'))
     inputs.push({
       id: basename(sessionDir).replace(/^session_/, ''),
       provider: 'kimicode',
       project: projectFromWorkDir(state.cwd || state.workDir || '', basename(dirname(sessionDir))),
       branch: null,
-      model: await kimicodeModel(join(sessionDir, 'agents', 'main', 'wire.jsonl')),
-      contextTokens: null,
-      contextWindow: null,
+      model: tail.model,
+      contextTokens: tail.contextTokens,
+      contextWindow: tail.contextWindow,
       startedMs: state.createdAtMs || birthtimeMs,
       lastActivityMs: agents.mainMs,
       subagentActivityMs: agents.subagentMs,
