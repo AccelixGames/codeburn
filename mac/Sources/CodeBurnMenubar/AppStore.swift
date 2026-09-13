@@ -2248,7 +2248,10 @@ final class AppStore {
     /// "none running".
     func capacityDockLiveSessions(for provider: CapacityDockProvider) -> [LiveSession]? {
         guard let block = menubarPayload?.liveSessions else { return nil }
-        return block.sessions.filter { $0.provider == provider.id }
+        // The CLI names providers by their own ids ("kimicode", "cursor-agent"),
+        // not by the dock's raw identifiers ("kimi"); match the payload ids.
+        let ids = provider.payloadProviderIDs
+        return block.sessions.filter { ids.contains($0.provider) }
     }
 
     /// Today's totals for the dock popover. The background loop keeps the
