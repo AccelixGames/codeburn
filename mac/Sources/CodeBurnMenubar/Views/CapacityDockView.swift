@@ -154,27 +154,10 @@ enum CapacityDockGlance {
     /// The old zero-spacing HStack let intrinsic Text widths bleed across columns.
     static let windowsColumnGap: CGFloat = 8
     static let windowsRowGap: CGFloat = 6
-    /// One 9.5pt pace caption under the reset line, with its 2pt gap. Reserved
-    /// whenever connected data carries a window with validated duration, even
-    /// while the caption itself is still empty — the slot must not appear and
-    /// disappear with wall-clock time under an open panel.
-    static let paceLineHeight: CGFloat = 12
-    static let paceLineGap: CGFloat = 2
     /// 8 top + one secondary line + 16 bottom.
     static let windowsEmptyHeight: CGFloat = 37
 
-    /// Whether the windows row carries pace slots: connected data with at
-    /// least one displayed window holding validated duration metadata.
-    static func drawsPace(_ quota: QuotaSummary) -> Bool {
-        guard drawsWindows(quota) else { return false }
-        let shown = windows(quota)
-        guard !shown.isEmpty else { return false }
-        return QuotaPacePresentation.reservesLine(for: shown)
-    }
-
-    /// The windows row's height for this quota: the plain row, or the row with
-    /// the pace slot every column reserves. Must stay in step with
-    /// `windowColumn`, which draws the slot under every column when this fires.
+    /// The windows row's height for this quota.
     static func windowsHeight(for quota: QuotaSummary) -> CGFloat {
         let shown = windows(quota)
         guard !shown.isEmpty else { return windowsEmptyHeight }
@@ -185,12 +168,10 @@ enum CapacityDockGlance {
         ).rounded()
     }
 
-    /// One or two windows stay on one compact row. Three and four windows use
-    /// two columns and enough row height for every percentage, reset, and pace
-    /// caption. This is shared by `detailHeight` and the actual SwiftUI grid.
+    /// Up to three windows share one compact row; a fourth starts a second row. This is shared by `detailHeight` and the actual SwiftUI grid.
     static func windowColumnCount(for windowCount: Int) -> Int {
         guard windowCount > 0 else { return 0 }
-        return min(windowCount, 2)
+        return min(windowCount, 3)
     }
 
     static func windowRowCount(for windowCount: Int) -> Int {
@@ -199,18 +180,13 @@ enum CapacityDockGlance {
         return (windowCount + columns - 1) / columns
     }
 
-    static func windowRowHeight(hasPaceSlot: Bool) -> CGFloat {
-        windowContentHeight + (hasPaceSlot ? paceLineGap + paceLineHeight : 0)
-    }
-
     /// Height of the grid alone, excluding this section's top and bottom pads.
     static func windowsGridHeight(for quota: QuotaSummary) -> CGFloat {
         let count = windows(quota).count
         guard count > 0 else { return 0 }
         let rows = windowRowCount(for: count)
-        let rowHeight = windowRowHeight(hasPaceSlot: drawsPace(quota))
         return (
-            CGFloat(rows) * rowHeight
+            CGFloat(rows) * windowContentHeight
                 + CGFloat(max(0, rows - 1)) * windowsRowGap
         ).rounded()
     }
@@ -1152,32 +1128,18 @@ struct CapacityDockDetailView: View {
     }
 
     /// One cell per quota window, in the order the provider reported them.
-    /// One or two windows stay on a compact row. Three or four windows use a
-    /// two-column grid whose cell width comes from the actual content geometry,
-    /// including its inter-column gap. When the panel reserved pace slots
-    /// (`drawsPace`), every cell draws the slot — empty where its window has no
-    /// defensible caption — so rows stay aligned with the height the panel
-    /// reserved.
+    /// Up to three windows share a compact row; four use two rows. Cell width
+    /// comes from the actual content geometry, including its inter-column gap.
     @ViewBuilder
     private func windowsSection(_ quota: QuotaSummary) -> some View {
         let s = model.detailScale
         let windows = CapacityDockGlance.windows(quota)
-        let hasPaceSlot = CapacityDockGlance.drawsPace(quota)
-        let paceLines = QuotaPacePresentation.lines(
-            for: windows,
-            connection: quota.connection
-        )
         Group {
             if windows.isEmpty {
                 budgetLine()
                     .frame(height: CapacityDockGlance.captionLine * s)
             } else {
-                windowGrid(
-                    windows,
-                    paceLines: paceLines,
-                    hasPaceSlot: hasPaceSlot,
-                    scale: s
-                )
+                windowGrid(windows, scale: s)
                 .frame(height: CapacityDockGlance.windowsGridHeight(for: quota) * s)
             }
         }
@@ -1190,8 +1152,6 @@ struct CapacityDockDetailView: View {
     @ViewBuilder
     private func windowGrid(
         _ windows: [QuotaSummary.Window],
-        paceLines: [QuotaPacePresentation.Line?],
-        hasPaceSlot: Bool,
         scale: CGFloat
     ) -> some View {
         let columnCount = CapacityDockGlance.windowColumnCount(for: windows.count)
@@ -1206,7 +1166,7 @@ struct CapacityDockDetailView: View {
                 (geometry.size.width - columnSpacing * CGFloat(max(0, columnCount - 1)))
                     / CGFloat(max(columnCount, 1))
             )
-            VStack(spacing: windows.count > 2 ? CapacityDockGlance.windowsRowGap * scale : 0) {
+            VStack(spacing: rowCount > 1 ? CapacityDockGlance.windowsRowGap * scale : 0) {
                 ForEach(0..<rowCount, id: \.self) { row in
                     HStack(spacing: columnSpacing) {
                         ForEach(0..<columnCount, id: \.self) { column in
@@ -1216,8 +1176,6 @@ struct CapacityDockDetailView: View {
                                     windows[index],
                                     width: columnWidth,
                                     alignment: alignment,
-                                    paceLine: hasPaceSlot ? paceLines[index] : nil,
-                                    hasPaceSlot: hasPaceSlot,
                                     scale: scale
                                 )
                             } else {
@@ -1241,8 +1199,6 @@ struct CapacityDockDetailView: View {
         _ window: QuotaSummary.Window,
         width: CGFloat,
         alignment: HorizontalAlignment,
-        paceLine: QuotaPacePresentation.Line?,
-        hasPaceSlot: Bool,
         scale: CGFloat
     ) -> some View {
         VStack(alignment: alignment, spacing: 0) {
@@ -1282,48 +1238,11 @@ struct CapacityDockDetailView: View {
                 )
                 .padding(.top, 2 * scale)
                 .accessibilityLabel(L("Resets %@", window.resetsInLabel))
-            if hasPaceSlot {
-                paceCaption(paceLine)
-                    .frame(
-                        width: width,
-                        height: CapacityDockGlance.paceLineHeight * scale,
-                        alignment: alignment == .leading ? .leading : .center
-                    )
-                    .padding(.top, CapacityDockGlance.paceLineGap * scale)
-            }
         }
         .frame(
             width: width,
             alignment: alignment == .leading ? .leading : .center
         )
-    }
-
-    /// The whole-window-average pace reading under one quota window. An absent
-    /// caption leaves its reserved slot empty: no estimate is the honest state
-    /// for a too-young window, and inventing one is not.
-    @ViewBuilder
-    private func paceCaption(_ line: QuotaPacePresentation.Line?) -> some View {
-        if let line {
-            let color: Color = switch line.tone {
-            case .danger: .red.opacity(0.92)
-            case .warning: .orange.opacity(0.9)
-            case .neutral: Color.capacityDockText.opacity(0.45)
-            }
-            Text(line.text)
-                .font(.system(size: 9.5, weight: .medium))
-                .monospacedDigit()
-                .foregroundStyle(color)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                // The full caption remains in the tooltip/accessibility tree;
-                // middle truncation retains both the estimate kind and its
-                // useful endpoint when a future caption grows longer.
-                .truncationMode(.middle)
-                .help(line.helpText)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(line.text)
-                .accessibilityHint(line.helpText)
-        }
     }
 
     /// No quota window exists for this provider, so money is the capacity.
