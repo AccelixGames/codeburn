@@ -114,15 +114,15 @@ struct CapacityDockGlanceTests {
         #expect(CapacityDockGlance.windowsHeight(for: quota([window("5-hour", 0.2), window("Weekly", 0.5)])) == CapacityDockGlance.windowsHeight)
     }
 
-    @Test("The pill tint ramps green, yellow, orange, red at 70, 80 and 90 percent")
+    @Test("The pill tint ramps green, yellow, orange, red at 60, 70 and 95 percent, like the flame")
     func severityRamp() {
         #expect(CapacityDockGlance.severityColor(0.0) == .green)
-        #expect(CapacityDockGlance.severityColor(0.69) == .green)
-        #expect(CapacityDockGlance.severityColor(0.70) == .yellow)
-        #expect(CapacityDockGlance.severityColor(0.79) == .yellow)
-        #expect(CapacityDockGlance.severityColor(0.80) == .orange)
-        #expect(CapacityDockGlance.severityColor(0.89) == .orange)
-        #expect(CapacityDockGlance.severityColor(0.90) == .red)
+        #expect(CapacityDockGlance.severityColor(0.59) == .green)
+        #expect(CapacityDockGlance.severityColor(0.60) == .yellow)
+        #expect(CapacityDockGlance.severityColor(0.69) == .yellow)
+        #expect(CapacityDockGlance.severityColor(0.70) == .orange)
+        #expect(CapacityDockGlance.severityColor(0.94) == .orange)
+        #expect(CapacityDockGlance.severityColor(0.95) == .red)
         #expect(CapacityDockGlance.severityColor(1.5) == .red)
     }
 
