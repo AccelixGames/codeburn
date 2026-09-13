@@ -168,11 +168,10 @@ enum CapacityDockGlance {
         ).rounded()
     }
 
-    /// One or two windows stay on one compact row. Three and four windows use
-    /// two columns and enough row height for every percentage and reset. This is shared by `detailHeight` and the actual SwiftUI grid.
+    /// Up to three windows share one compact row; a fourth starts a second row. This is shared by `detailHeight` and the actual SwiftUI grid.
     static func windowColumnCount(for windowCount: Int) -> Int {
         guard windowCount > 0 else { return 0 }
-        return min(windowCount, 2)
+        return min(windowCount, 3)
     }
 
     static func windowRowCount(for windowCount: Int) -> Int {
@@ -1129,9 +1128,8 @@ struct CapacityDockDetailView: View {
     }
 
     /// One cell per quota window, in the order the provider reported them.
-    /// One or two windows stay on a compact row. Three or four windows use a
-    /// two-column grid whose cell width comes from the actual content geometry,
-    /// including its inter-column gap.
+    /// Up to three windows share a compact row; four use two rows. Cell width
+    /// comes from the actual content geometry, including its inter-column gap.
     @ViewBuilder
     private func windowsSection(_ quota: QuotaSummary) -> some View {
         let s = model.detailScale
@@ -1168,7 +1166,7 @@ struct CapacityDockDetailView: View {
                 (geometry.size.width - columnSpacing * CGFloat(max(0, columnCount - 1)))
                     / CGFloat(max(columnCount, 1))
             )
-            VStack(spacing: windows.count > 2 ? CapacityDockGlance.windowsRowGap * scale : 0) {
+            VStack(spacing: rowCount > 1 ? CapacityDockGlance.windowsRowGap * scale : 0) {
                 ForEach(0..<rowCount, id: \.self) { row in
                     HStack(spacing: columnSpacing) {
                         ForEach(0..<columnCount, id: \.self) { column in

@@ -85,7 +85,7 @@ struct CapacityDockGlanceTests {
         #expect(CapacityDockGlance.windows(quota([])).isEmpty)
     }
 
-    @Test("Three or four windows use two constrained columns and two rows")
+    @Test("Up to three windows share one row; a fourth wraps to a second")
     func multiWindowGridGeometry() {
         let plainThree = quota([
             window("5-hour", 0.2),
@@ -100,15 +100,15 @@ struct CapacityDockGlanceTests {
         ])
         #expect(CapacityDockGlance.windowColumnCount(for: 1) == 1)
         #expect(CapacityDockGlance.windowColumnCount(for: 2) == 2)
-        #expect(CapacityDockGlance.windowColumnCount(for: 3) == 2)
-        #expect(CapacityDockGlance.windowColumnCount(for: 4) == 2)
+        #expect(CapacityDockGlance.windowColumnCount(for: 3) == 3)
+        #expect(CapacityDockGlance.windowColumnCount(for: 4) == 3)
         #expect(CapacityDockGlance.windowRowCount(for: 1) == 1)
         #expect(CapacityDockGlance.windowRowCount(for: 2) == 1)
-        #expect(CapacityDockGlance.windowRowCount(for: 3) == 2)
+        #expect(CapacityDockGlance.windowRowCount(for: 3) == 1)
         #expect(CapacityDockGlance.windowRowCount(for: 4) == 2)
-        #expect(abs(CapacityDockGlance.windowsGridHeight(for: plainThree) - (2 * 53 + 6)) < 0.001)
-        #expect(abs(CapacityDockGlance.windowsHeight(for: plainThree) - (8 + 2 * 53 + 6 + 16)) < 0.001)
-        #expect(CapacityDockGlance.windowsHeight(for: plainFour) == CapacityDockGlance.windowsHeight(for: plainThree))
+        #expect(CapacityDockGlance.windowsHeight(for: plainThree) == CapacityDockGlance.windowsHeight)
+        #expect(abs(CapacityDockGlance.windowsGridHeight(for: plainFour) - (2 * 53 + 6)) < 0.001)
+        #expect(abs(CapacityDockGlance.windowsHeight(for: plainFour) - (8 + 2 * 53 + 6 + 16)) < 0.001)
         // One and two windows retain the original compact one-row geometry.
         #expect(CapacityDockGlance.windowsHeight(for: quota([window("Weekly", 0.5)])) == CapacityDockGlance.windowsHeight)
         #expect(CapacityDockGlance.windowsHeight(for: quota([window("5-hour", 0.2), window("Weekly", 0.5)])) == CapacityDockGlance.windowsHeight)
@@ -242,8 +242,8 @@ struct CapacityDockGlanceTests {
                 + CapacityDockGlance.todayHeight
                 + CapacityDockGlance.windowsHeight(for: quota(three))
         )
-        // 44 header + 83 sessions + 97 today + 136 two-row windows grid.
-        #expect(full == 360)
+        // 44 header + 83 sessions + 97 today + 77 one-row windows grid.
+        #expect(full == 301)
         // The panel opens and closes on the same 16pt inset it uses sideways.
         let headerParts: CGFloat = CapacityDockGlance.contentInset + 20 + 8
         #expect(CapacityDockGlance.headerHeight == headerParts)
@@ -272,13 +272,10 @@ struct CapacityDockGlanceTests {
             height(1, hasToday: true, windows: []) - full
                 == CapacityDockGlance.windowsEmptyHeight - CapacityDockGlance.windowsHeight(for: quota(three))
         )
-        // One and two columns stay on the compact row; three windows need the
+        // Up to three windows share the compact row; a fourth needs the
         // second grid row so every scope remains visible.
-        #expect(height(1, hasToday: true, windows: [three[0]]) < full)
-        #expect(
-            height(1, hasToday: true, windows: [three[0], three[1]])
-                == height(1, hasToday: true, windows: [three[0]])
-        )
+        #expect(height(1, hasToday: true, windows: [three[0]]) == full)
+        #expect(height(1, hasToday: true, windows: three + [window("Sonnet", 0.5)]) > full)
     }
 
     @Test("A vertical tail adds its allowance to the panel height")
