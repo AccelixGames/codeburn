@@ -170,7 +170,7 @@ struct QuotaWarningRowTests {
 
     @Test("the countdown is the Capacity Dock's own wording")
     func countdownMatchesDock() {
-        let reset = Self.now.addingTimeInterval(2 * 86_400 + 3 * 3600 + 5 * 60)
+        let reset = Self.now.addingTimeInterval(183_900) // 2d 3h 5m
         let dock = QuotaPacePresentation.countdownLabel(from: Self.now, to: reset)
         let warning = QuotaWarning(name: "Codex", percent: 72, windowLabel: "Weekly", resetsAt: reset)
         #expect(dock == "2d 3h")
