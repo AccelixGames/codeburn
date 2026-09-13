@@ -3,8 +3,9 @@
 /// the optional `liveSessions` block of the menubar payload; the app renders
 /// only what it finds here.
 import { open, readdir, stat } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { getClaudeConfigDirs, getDesktopSessionsDirs } from './providers/claude.js'
+import { kimicodeHomes, projectFromWorkDir, readState as readKimicodeState } from './providers/kimicode.js'
 import { reportedContextWindow } from './context-tree.js'
 import { getShortModelName } from './models.js'
 import type { ApiUsage, AssistantMessageContent, JournalEntry } from './types.js'
@@ -292,7 +293,85 @@ export async function collectLiveSessionInputs(
     parent.subagentActivityMs.push(sidechain.mtimeMs)
   }
 
-  return [...inputs.values()]
+  return [...inputs.values(), ...await collectKimicodeInputs(nowMs, windowMs)]
+}
+
+/// Last model the session actually asked for. Tail-only, like the Claude
+/// scanner: a running wire file reaches tens of MB and only the end matters.
+async function kimicodeModel(wirePath: string): Promise<string | null> {
+  let text = ''
+  try {
+    text = await readTail(wirePath, TAIL_BYTES)
+  } catch {
+    return null
+  }
+  const lines = text.split('\n')
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index]
+    if (!line || !line.trim()) continue
+    let record: { type?: unknown; model?: unknown }
+    try {
+      record = JSON.parse(line) as { type?: unknown; model?: unknown }
+    } catch {
+      continue
+    }
+    if (record.type !== 'llm.request') continue
+    if (typeof record.model === 'string' && record.model) return record.model
+  }
+  return null
+}
+
+/// Kimi Code keeps a directory per session, the session's own turns in
+/// `agents/main/wire.jsonl` and every sub-agent in a sibling agent directory.
+/// A missing or unreadable store is silent: no Kimi install means no rows.
+export async function collectKimicodeInputs(
+  nowMs: number,
+  windowMs: number,
+  roots: string[] = kimicodeHomes(),
+): Promise<LiveSessionInput[]> {
+  const paths: string[] = []
+  for (const root of roots) {
+    const entries = await readdir(join(root, 'sessions'), { recursive: true, withFileTypes: true }).catch(() => [])
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name === 'wire.jsonl') paths.push(join(entry.parentPath, entry.name))
+    }
+  }
+
+  const bySession = new Map<string, { mainMs: number; subagentMs: number[] }>()
+  await Promise.all(paths.map(async path => {
+    const info = await stat(path).catch(() => null)
+    if (!info?.isFile()) return
+    const sessionDir = dirname(dirname(dirname(path)))
+    const agents = bySession.get(sessionDir) ?? { mainMs: 0, subagentMs: [] }
+    if (basename(dirname(path)) === 'main') agents.mainMs = info.mtimeMs
+    else if (nowMs - info.mtimeMs <= windowMs) agents.subagentMs.push(info.mtimeMs)
+    bySession.set(sessionDir, agents)
+  }))
+
+  const inputs: LiveSessionInput[] = []
+  for (const [sessionDir, agents] of bySession) {
+    const mainIsLive = agents.mainMs > 0 && nowMs - agents.mainMs <= windowMs
+    if (!mainIsLive && agents.subagentMs.length === 0) continue
+    const state = await readKimicodeState(sessionDir)
+    // `createdAt` is absent on stores that never wrote it; the state file itself
+    // is created with the session, so its birthtime is the same moment.
+    const birthtimeMs = state.createdAtMs
+      ? 0
+      : (await stat(join(sessionDir, 'state.json')).catch(() => null))?.birthtimeMs ?? 0
+    inputs.push({
+      id: basename(sessionDir).replace(/^session_/, ''),
+      provider: 'kimicode',
+      project: projectFromWorkDir(state.cwd || state.workDir || '', basename(dirname(sessionDir))),
+      branch: null,
+      model: await kimicodeModel(join(sessionDir, 'agents', 'main', 'wire.jsonl')),
+      contextTokens: null,
+      contextWindow: null,
+      startedMs: state.createdAtMs || birthtimeMs,
+      lastActivityMs: agents.mainMs,
+      subagentActivityMs: agents.subagentMs,
+    })
+  }
+  return inputs
 }
 
 export async function collectLiveSessions(
