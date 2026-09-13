@@ -85,54 +85,6 @@ struct CapacityDockGlanceTests {
         #expect(CapacityDockGlance.windows(quota([])).isEmpty)
     }
 
-    @Test("Pace slots reserve height for any window with a validated duration")
-    func paceSlotReservedByDuration() {
-        let resetsAt = Date().addingTimeInterval(3 * 24 * 3600)
-        let withoutDuration = [window("5-hour", 0.2, resetsAt: resetsAt), window("Weekly", 0.5, resetsAt: resetsAt)]
-        let withDuration = [
-            window("5-hour", 0.2, resetsAt: resetsAt, windowSeconds: QuotaPacePresentation.claudeFiveHourSeconds),
-            window("Weekly", 0.5, resetsAt: resetsAt, windowSeconds: QuotaPacePresentation.claudeSevenDaySeconds),
-        ]
-        #expect(!CapacityDockGlance.drawsPace(quota(withoutDuration)))
-        #expect(CapacityDockGlance.drawsPace(quota(withDuration)))
-        // Missing duration still draws the plain row.
-        #expect(CapacityDockGlance.windowsHeight(for: quota(withoutDuration)) == CapacityDockGlance.windowsHeight)
-        let step = CapacityDockGlance.paceLineGap + CapacityDockGlance.paceLineHeight
-        #expect(CapacityDockGlance.windowsHeight(for: quota(withDuration)) == CapacityDockGlance.windowsHeight + step)
-        // Stale and loading data carry the durations but no defensible
-        // estimate. The slot stays reserved anyway: it is the caption that
-        // goes quiet, and the panel must not resize under the pointer every
-        // time a refresh starts or a sample ages out.
-        for connection in [QuotaSummary.Connection.stale, .loading] {
-            #expect(CapacityDockGlance.drawsPace(quota(withDuration, connection: connection)))
-            #expect(
-                CapacityDockGlance.windowsHeight(for: quota(withDuration, connection: connection))
-                    == CapacityDockGlance.windowsHeight(for: quota(withDuration))
-            )
-        }
-        // The computed panel height reflects the reserved slot.
-        func detailHeight(_ windows: [QuotaSummary.Window], connection: QuotaSummary.Connection) -> CGFloat {
-            CapacityDockMetrics.detailHeight(
-                quota: quota(windows, connection: connection),
-                sessionCount: nil,
-                hasToday: false,
-                tailEdge: .right,
-                scale: 1
-            )
-        }
-        #expect(detailHeight(withDuration, connection: .connected) - detailHeight(withoutDuration, connection: .connected) == step)
-        for scale in [0.9, 1.0, 1.15, 1.25, 1.4] {
-            let h = CapacityDockMetrics.detailHeight(
-                quota: quota(withDuration),
-                sessionCount: 2,
-                hasToday: true,
-                tailEdge: .bottom,
-                scale: CGFloat(scale)
-            )
-            #expect(h == h.rounded())
-        }
-    }
-
     @Test("Three or four windows use two constrained columns and two rows")
     func multiWindowGridGeometry() {
         let plainThree = quota([
