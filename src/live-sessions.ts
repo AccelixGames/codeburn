@@ -340,13 +340,24 @@ export async function collectKimicodeInputs(
   windowMs: number,
   roots: string[] = kimicodeHomes(),
 ): Promise<LiveSessionInput[]> {
+  // Walked level by level rather than recursively: an agent directory also
+  // holds `blobs` and `file-history` trees, and descending into those turns a
+  // two-thousand-file scan into an eighteen-thousand-entry one.
+  const subdirectories = async (path: string): Promise<string[]> =>
+    (await readdir(path, { withFileTypes: true }).catch(() => []))
+      .filter(entry => entry.isDirectory())
+      .map(entry => join(path, entry.name))
+
   const paths: string[] = []
-  for (const root of roots) {
-    const entries = await readdir(join(root, 'sessions'), { recursive: true, withFileTypes: true }).catch(() => [])
-    for (const entry of entries) {
-      if (entry.isFile() && entry.name === 'wire.jsonl') paths.push(join(entry.parentPath, entry.name))
-    }
-  }
+  await Promise.all(roots.map(async root => {
+    await Promise.all((await subdirectories(join(root, 'sessions'))).map(async workDir => {
+      await Promise.all((await subdirectories(workDir)).map(async sessionDir => {
+        for (const agent of await subdirectories(join(sessionDir, 'agents'))) {
+          paths.push(join(agent, 'wire.jsonl'))
+        }
+      }))
+    }))
+  }))
 
   const bySession = new Map<string, { mainMs: number; subagentMs: number[] }>()
   await Promise.all(paths.map(async path => {

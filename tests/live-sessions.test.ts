@@ -262,6 +262,18 @@ describe('collectKimicodeInputs', () => {
     expect(inputs[0]!.startedMs).toBeGreaterThan(0)
   })
 
+  it('ignores a wire.jsonl buried in an agent blob or file-history tree', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kimi-live-'))
+    const dir = await session(root, 'wd_atlas_aaaaaaaaaaaa', 'session_decoys', JSON.stringify({ cwd: '/Users/x/atlas' }))
+    await wire(dir, 'main', NOW - 20_000, [{ type: 'llm.request', model: 'k3' }])
+    await wire(dir, join('main', 'blobs'), NOW - 1_000)
+    await wire(dir, join('main', 'file-history', 'src'), NOW - 1_000)
+    const inputs = await collectKimicodeInputs(NOW, WINDOW_MS, [root])
+    expect(inputs.map(i => i.id)).toEqual(['decoys'])
+    expect(inputs[0]!.subagentActivityMs).toEqual([])
+    expect(inputs[0]!.lastActivityMs).toBe(NOW - 20_000)
+  })
+
   it('stays silent on a store that is not there', async () => {
     const root = await mkdtemp(join(tmpdir(), 'kimi-live-'))
     expect(await collectKimicodeInputs(NOW, WINDOW_MS, [join(root, 'missing')])).toEqual([])
