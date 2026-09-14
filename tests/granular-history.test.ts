@@ -96,12 +96,12 @@ function sumSeries(history: GranularHistory, kind: 'models' | 'sessions', series
 }
 
 describe('granular history', () => {
-  it('selects 15-minute, hourly, and daily buckets from the requested duration', () => {
+  it('selects 5-minute, hourly, and daily buckets from the requested duration', () => {
     const start = new Date('2026-07-01T00:00:00.000Z')
     const range = (hours: number) => ({ start, end: new Date(start.getTime() + hours * 60 * 60 * 1000) })
 
-    expect(granularBucketMinutes(range(24))).toBe(15)
-    expect(granularBucketMinutes(range(48))).toBe(15)
+    expect(granularBucketMinutes(range(24))).toBe(5)
+    expect(granularBucketMinutes(range(48))).toBe(5)
     expect(granularBucketMinutes(range(48.01))).toBe(60)
     expect(granularBucketMinutes(range(24 * 8))).toBe(60)
     expect(granularBucketMinutes(range(24 * 8 + 1))).toBe(1440)
@@ -273,16 +273,18 @@ describe('granular history', () => {
       ]),
     ], { start, end }, end)
 
-    expect(history.bucketMinutes).toBe(15)
-    expect(history.points).toHaveLength(96)
+    expect(history.bucketMinutes).toBe(5)
+    expect(history.points).toHaveLength(288)
     expect(history.modelSeries).toHaveLength(3)
     expect(history.sessionSeries).toHaveLength(2)
 
-    const firstActive = history.points.find(point => point.timestamp === '2026-07-15T01:00:00.000Z')!
-    const secondActive = history.points.find(point => point.timestamp === '2026-07-15T01:15:00.000Z')!
-    const idle = history.points.find(point => point.timestamp === '2026-07-15T01:30:00.000Z')!
-    expect(firstActive).toMatchObject({ cost: 1.5, tokens: 200 })
-    expect(secondActive).toMatchObject({ cost: 0.25, tokens: 15 })
+    const firstActive = history.points.find(point => point.timestamp === '2026-07-15T01:05:00.000Z')!
+    const secondActive = history.points.find(point => point.timestamp === '2026-07-15T01:10:00.000Z')!
+    const idle = history.points.find(point => point.timestamp === '2026-07-15T01:20:00.000Z')!
+    expect(firstActive).toMatchObject({ cost: 1, tokens: 150 })
+    expect(secondActive).toMatchObject({ cost: 0.5, tokens: 50 })
+    const thirdActive = history.points.find(point => point.timestamp === '2026-07-15T01:15:00.000Z')!
+    expect(thirdActive).toMatchObject({ cost: 0.25, tokens: 15 })
     expect(idle).toMatchObject({ cost: 0, tokens: 0, models: [], sessions: [] })
 
     // Labels use the real projectPath's last two segments, not the sanitized
@@ -342,7 +344,7 @@ describe('granular history', () => {
       ],
     }])], { start, end }, now)
 
-    expect(history.points.at(-1)!.timestamp).toBe('2026-07-15T02:15:00.000Z')
+    expect(history.points.at(-1)!.timestamp).toBe('2026-07-15T02:20:00.000Z')
     expect(history.points.reduce((sum, point) => sum + point.cost, 0)).toBe(1)
     expect(history.points.reduce((sum, point) => sum + point.tokens, 0)).toBe(10)
   })

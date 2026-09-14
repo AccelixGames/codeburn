@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
 import type { DailyEntry, DeviceUsage, GranularHistory } from '@/lib/api'
-import { CHART_COLORS, cn, compactUsd, fmtTokens, label, usd } from '@/lib/utils'
+import { CHART_COLORS, chartColorForModel, cn, compactUsd, fmtTokens, label, usd } from '@/lib/utils'
 
 export type Unit = 'cost' | 'tokens'
 
@@ -144,7 +144,9 @@ function GranularLines({
         : breakdown === 'models'
           ? label(metadataById.get(key) ?? key)
           : metadataById.get(key) ?? key,
-      color: CHART_COLORS[index % CHART_COLORS.length]!,
+      color: breakdown === 'models'
+        ? chartColorForModel(key, index)
+        : CHART_COLORS[index % CHART_COLORS.length]!,
     }))
     // Trim LEADING zero-only buckets: the server zero-fills the whole range, so
     // a flat zero line before the first real value asserts spend that was never

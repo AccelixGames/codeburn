@@ -52,6 +52,22 @@ export const CHART_COLORS = [
   'var(--chart-6)', 'var(--chart-7)', 'var(--chart-8)', 'var(--chart-9)', 'var(--chart-10)',
 ]
 
+// Keep the GPT family visually stable and distinct even when the series order
+// changes between refreshes or filters.
+const GPT_MODEL_COLORS: ReadonlyArray<{ marker: string; color: string }> = [
+  { marker: 'astra', color: 'var(--chart-1)' },
+  { marker: 'luna', color: 'var(--chart-4)' },
+  { marker: 'sol', color: 'var(--chart-2)' },
+  { marker: 'terra', color: 'var(--chart-3)' },
+  { marker: 'codex', color: 'var(--chart-6)' },
+]
+
+export function chartColorForModel(key: string, index: number): string {
+  const normalized = key.toLowerCase()
+  const matched = GPT_MODEL_COLORS.find(({ marker }) => normalized.includes(marker))
+  return matched?.color ?? CHART_COLORS[index % CHART_COLORS.length]!
+}
+
 const MODEL_LABELS: Record<string, string> = {
   'claude-opus-4-8': 'Opus 4.8',
   'claude-opus-4-6': 'Opus 4.6',
