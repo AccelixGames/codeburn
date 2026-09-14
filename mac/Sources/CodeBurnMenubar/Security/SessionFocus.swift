@@ -84,7 +84,10 @@ enum SessionFocus {
         files: [ClaudeSessionFile],
         startTime: (pid_t) -> Date?
     ) -> pid_t? {
-        guard let file = files.first(where: { $0.sessionId == sessionID }),
+        // Claude Code writes a fresh `<pid>.json` on every resume and never
+        // removes the old one, so several files can name this session and only
+        // the newest of them names the process that is still running.
+        guard let file = files.filter({ $0.sessionId == sessionID }).max(by: { $0.startedAt < $1.startedAt }),
               let started = startTime(file.pid),
               abs(started.timeIntervalSince1970 - file.startedAt / 1000) < pidReuseTolerance
         else { return nil }

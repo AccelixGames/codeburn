@@ -118,6 +118,31 @@ struct SessionFocusTests {
         #expect(pid == 222)
     }
 
+    @Test("a resumed session keeps the newest of the files claiming its id")
+    func prefersNewestSessionFile() {
+        let older = Date(timeIntervalSince1970: 1_780_000_000)
+        let newer = older.addingTimeInterval(3_600)
+        let files = [
+            Self.file(pid: 111, id: "wanted", startedAt: older),
+            Self.file(pid: 222, id: "wanted", startedAt: newer),
+        ]
+        let pid = SessionFocus.pid(forSessionID: "wanted", files: files) { $0 == 111 ? older : newer }
+        #expect(pid == 222)
+    }
+
+    @Test("a newest file that fails the guard is not answered with the stale one")
+    func refusesStaleFileBehindARecycledNewest() {
+        let older = Date(timeIntervalSince1970: 1_780_000_000)
+        let newer = older.addingTimeInterval(3_600)
+        let files = [
+            Self.file(pid: 111, id: "wanted", startedAt: older),
+            Self.file(pid: 222, id: "wanted", startedAt: newer),
+        ]
+        let recycled = newer.addingTimeInterval(SessionFocus.pidReuseTolerance + 1)
+        let pid = SessionFocus.pid(forSessionID: "wanted", files: files) { $0 == 111 ? older : recycled }
+        #expect(pid == nil)
+    }
+
     @Test("a pid the kernel no longer knows is not a session")
     func rejectsDeadPID() {
         let files = [Self.file(pid: 222, id: "wanted", startedAt: Date(timeIntervalSince1970: 1_780_000_000))]

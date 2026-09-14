@@ -1336,6 +1336,11 @@ struct CapacityDockDetailView: View {
 private struct SessionFocusAffordance: ViewModifier {
     let target: SessionFocusTarget?
 
+    /// A row can vanish while the pointer is still over it — the session leaves
+    /// the ten-minute window, or the dock hides — and no hover exit ever fires,
+    /// so the pushed cursor has to be popped on the way out instead.
+    @State private var isHovering = false
+
     @ViewBuilder
     func body(content: Content) -> some View {
         if let target {
@@ -1345,7 +1350,15 @@ private struct SessionFocusAffordance: ViewModifier {
                 .accessibilityAddTraits(.isButton)
                 .accessibilityHint(target.tooltip)
                 .onHover { hovering in
+                    guard hovering != isHovering else { return }
+                    isHovering = hovering
                     if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                }
+                .onDisappear {
+                    if isHovering {
+                        isHovering = false
+                        NSCursor.pop()
+                    }
                 }
                 .onTapGesture { SessionFocus.raise(target) }
         } else {
