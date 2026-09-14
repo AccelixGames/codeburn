@@ -300,6 +300,7 @@ const GRAPH_OTHER_COLOR = 'var(--chart-10)'
 function GraphBreakdownTotals({ payload, breakdown, unit }: { payload: Payload; breakdown: Breakdown; unit: Unit }) {
   const timeline = payload.history.timeline
   if (!timeline) return null
+  const [hoveredSegment, setHoveredSegment] = useState<{ rowId: string; segId: string } | null>(null)
   const rowMetadata = breakdown === 'sessions' ? timeline.sessionSeries : timeline.modelSeries
   const segMetadata = breakdown === 'sessions' ? timeline.modelSeries : timeline.sessionSeries
   const rowLabels = new Map(rowMetadata.map((item) => [item.id, item.label]))
@@ -425,20 +426,36 @@ function GraphBreakdownTotals({ payload, breakdown, unit }: { payload: Payload; 
                     ) : (
                       labelView
                     )}
-                    <div className="h-2 overflow-hidden rounded-full bg-interactive-secondary">
-                      <div className="flex h-full rounded-full" style={{ width: barPct + '%' }}>
+                    <div className="relative min-w-0">
+                      <div className="h-3 overflow-hidden rounded-full bg-interactive-secondary">
+                        <div className="flex h-full rounded-full" style={{ width: barPct + '%' }}>
                         {row.segments.map((seg) => {
                           const segPct = row.value ? (seg.value / row.value) * 100 : 0
                           const withinRow = row.value ? Math.round((seg.value / row.value) * 100) + '%' : ''
                           return (
                             <div
                               key={seg.segId}
-                              title={`${seg.name} · ${fmt(seg.value)} · ${withinRow}`}
+                              aria-label={`${seg.name} · ${fmt(seg.value)} · ${withinRow}`}
+                              onMouseEnter={() => setHoveredSegment({ rowId: row.rowId, segId: seg.segId })}
+                              onMouseLeave={() => setHoveredSegment(null)}
                               style={{ width: segPct + '%', background: seg.color }}
                             />
                           )
                         })}
+                        </div>
                       </div>
+                      {hoveredSegment?.rowId === row.rowId && (
+                        <div className="pointer-events-none absolute left-0 top-full z-30 mt-2 w-max max-w-[min(360px,70vw)] rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-xl ring-1 ring-border">
+                          {row.segments.filter((seg) => seg.segId === hoveredSegment.segId).map((seg) => (
+                            <div key={seg.segId} className="flex items-center gap-2 whitespace-nowrap">
+                              <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: seg.color }} />
+                              <span className="text-tertiary-foreground">{seg.name}</span>
+                              <span className="font-medium tabular-nums text-foreground">{fmt(seg.value)}</span>
+                              <span className="tabular-nums text-muted-foreground">{row.value ? Math.round((seg.value / row.value) * 100) : 0}%</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <div className="min-w-[88px] text-right tabular-nums text-tertiary-foreground">
                       <span className="font-medium text-foreground">{fmt(row.value)}</span> {share}
