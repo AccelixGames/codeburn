@@ -79,6 +79,7 @@ CodeBurn does. It reads the session files your tools already write to disk and b
 Everything runs locally. No wrapper, no proxy, no API keys, nothing leaves your machine. Pricing comes from [LiteLLM](https://github.com/BerriAI/litellm), refreshed daily. The optional desktop app can send an anonymous, bucketed usage report if you say yes to it; see [Telemetry](#telemetry).
 
 <p align="center">
+  <a href="https://codeburn.app">Website</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#find-and-fix-waste">Find waste</a> ·
   <a href="#apply-fixes-undo-anytime">Apply fixes</a> ·
