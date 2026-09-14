@@ -1,0 +1,40 @@
+name: Limit open PRs per contributor
+
+# A contributor may have at most three pull requests open at once. The fourth is
+# closed with a note and can be reopened when one of the others lands or closes.
+# Repository admins are exempt. Runs on pull_request_target so it can act on PRs
+# from forks; it never checks out or runs the PR's code.
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  limit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const max = 3
+            const { owner, repo } = context.repo
+            const pr = context.payload.pull_request
+            const author = pr.user.login
+            if (pr.user.type === 'Bot') return
+            const { data: perm } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: author })
+            if (perm.permission === 'admin') return
+            const { data: open } = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${owner}/${repo} is:pr is:open author:${author}`,
+              per_page: 100,
+            })
+            const others = open.items.filter(i => i.number !== pr.number).sort((a, b) => a.number - b.number)
+            if (others.length < max) return
+            const list = others.map(i => `#${i.number}`).join(', ')
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: pr.number,
+              body: `Closing for now: you already have ${others.length} pull requests open (${list}), and we review at most ${max} per contributor at a time. Reopen this one when one of them is merged or closed. Issues are always welcome.`,
+            })
+            await github.rest.pulls.update({ owner, repo, pull_number: pr.number, state: 'closed' })
