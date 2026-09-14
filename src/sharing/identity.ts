@@ -1,5 +1,5 @@
 import * as selfsigned from 'selfsigned'
-import { X509Certificate } from 'crypto'
+import { createPrivateKey, createPublicKey, X509Certificate } from 'crypto'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join } from 'path'
@@ -36,15 +36,24 @@ export async function loadOrCreateIdentity(dir: string, name?: string): Promise<
 
   if (existsSync(keyPath) && existsSync(certPath)) {
     const [key, cert] = await Promise.all([readFile(keyPath, 'utf8'), readFile(certPath, 'utf8')])
-    let resolvedName = name ?? hostname()
     try {
-      const stored = (await readFile(namePath, 'utf8')).trim()
-      if (stored) resolvedName = name ?? stored
+      const privatePublic = createPublicKey(createPrivateKey(key)).export({ type: 'spki', format: 'der' }).toString('base64')
+      const certificatePublic = new X509Certificate(cert).publicKey.export({ type: 'spki', format: 'der' }).toString('base64')
+      if (privatePublic !== certificatePublic) throw new Error('stored identity key and certificate do not match')
+      let resolvedName = name ?? hostname()
+      try {
+        const stored = (await readFile(namePath, 'utf8')).trim()
+        if (stored) resolvedName = name ?? stored
+      } catch {
+        /* no stored name yet */
+      }
+      const der = new X509Certificate(cert).raw
+      return { key, cert, fingerprint: certFingerprint(der), name: resolvedName }
     } catch {
-      /* no stored name yet */
+      // A partial restore or older install can leave a mismatched key/cert.
+      // Regenerate the local identity instead of failing before the share
+      // server can start; existing peers must pair again after this change.
     }
-    const der = new X509Certificate(cert).raw
-    return { key, cert, fingerprint: certFingerprint(der), name: resolvedName }
   }
 
   const id = await generateIdentity(name)
