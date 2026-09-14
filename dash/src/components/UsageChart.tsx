@@ -56,10 +56,10 @@ function makeTooltip(labels: Record<string, string>, fmt: (n: number) => string,
   }
 }
 
-type Breakdown = 'sessions' | 'models'
+export type Breakdown = 'sessions' | 'models'
 const BREAKDOWN_STORAGE_KEY = 'codeburn-graph-breakdown'
 
-function loadBreakdown(): Breakdown {
+export function loadGraphBreakdown(): Breakdown {
   try {
     const saved = localStorage.getItem(BREAKDOWN_STORAGE_KEY)
     return saved === 'models' ? 'models' : 'sessions'
@@ -169,7 +169,7 @@ function GranularLines({
       color: key === 'display_total_ma'
         ? 'rgba(255, 255, 255, 0.45)'
         : breakdown === 'models'
-        ? chartColorForModel(key, index)
+        ? chartColorForModel(metadataById.get(key) ?? key, index)
         : CHART_COLORS[index % CHART_COLORS.length]!,
     }))
     // Trim LEADING zero-only buckets: the server zero-fills the whole range, so
@@ -182,10 +182,16 @@ function GranularLines({
       chartSeries.some(item => Number(row[item.key] ?? 0) > 0),
     )
     const rows = firstValueIdx > 0 ? rowData.slice(firstValueIdx) : firstValueIdx === 0 ? rowData : []
+    const tooltipLabels = Object.fromEntries(chartSeries.map(item => {
+      if (breakdown !== 'sessions') return [item.key, item.label]
+      // Duplicate session titles keep an id prefix in the legend for
+      // disambiguation; the hover card can show the human-readable title.
+      return [item.key, item.label.replace(/^[^ ]+ \([^)]*\) · /, '')]
+    }))
     return {
       rows,
       series: chartSeries,
-      labels: Object.fromEntries(chartSeries.map(item => [item.key, item.label])),
+      labels: tooltipLabels,
     }
   }, [timeline, breakdown, unit])
 
@@ -204,7 +210,7 @@ function GranularLines({
         {series.map(item => (
           <span key={item.key} className="flex min-w-0 items-center gap-1.5">
             <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: item.color }} />
-            <span className="max-w-40 truncate" title={item.label}>{item.label}</span>
+            <span className="max-w-80 truncate" title={item.label}>{item.label}</span>
           </span>
         ))}
       </div>
@@ -337,24 +343,34 @@ export function GranularUsageChart({
   daily,
   timeline,
   unit = 'cost',
+  selectedBreakdown: controlledBreakdown,
+  onBreakdownChange,
 }: {
   daily: DailyEntry[]
   timeline?: GranularHistory
   unit?: Unit
+  selectedBreakdown?: Breakdown
+  onBreakdownChange?: (breakdown: Breakdown) => void
 }) {
-  const [selectedBreakdown, setSelectedBreakdown] = useState<Breakdown>(loadBreakdown)
+  const [selectedBreakdown, setSelectedBreakdown] = useState<Breakdown>(loadGraphBreakdown)
   useEffect(() => {
+    if (controlledBreakdown !== undefined) return
     try {
       localStorage.setItem(BREAKDOWN_STORAGE_KEY, selectedBreakdown)
     } catch {
       // Storage can be disabled in embedded or private browser contexts.
     }
-  }, [selectedBreakdown])
+  }, [selectedBreakdown, controlledBreakdown])
   if (!timeline) return <LegacyUsageChart daily={daily} unit={unit} />
 
   const hasSessions = timeline.sessionSeries.length > 0
   const hasModels = timeline.modelSeries.length > 0
-  const breakdown = selectedBreakdown === 'sessions' && !hasSessions && hasModels ? 'models' : selectedBreakdown
+  const requestedBreakdown = controlledBreakdown ?? selectedBreakdown
+  const breakdown = requestedBreakdown === 'sessions' && !hasSessions && hasModels ? 'models' : requestedBreakdown
+  const selectBreakdown = (next: Breakdown) => {
+    onBreakdownChange?.(next)
+    if (!controlledBreakdown) setSelectedBreakdown(next)
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -370,7 +386,7 @@ export function GranularUsageChart({
                 key={option}
                 type="button"
                 disabled={!available}
-                onClick={() => setSelectedBreakdown(option)}
+                onClick={() => selectBreakdown(option)}
                 className={cn(
                   'rounded-[4px] px-2 py-0.5 text-[10px] font-medium capitalize transition-colors',
                   breakdown === option ? 'bg-card text-foreground shadow-sm' : 'text-tertiary-foreground hover:text-foreground',

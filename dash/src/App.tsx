@@ -12,13 +12,13 @@ import {
   type Payload,
   type Period,
 } from '@/lib/api'
-import { cn, fmtNum, fmtTokens, formatSessionCount, usd } from '@/lib/utils'
+import { CHART_COLORS, chartColorForModel, cn, fmtNum, fmtTokens, formatSessionCount, usd, label as formatModelLabel } from '@/lib/utils'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { MetricCard } from '@/components/MetricCard'
 import { BarList, type BarItem } from '@/components/BarList'
 import { DataTable } from '@/components/DataTable'
-import { GranularUsageChart, DeviceUsageChart, type Unit } from '@/components/UsageChart'
+import { GranularUsageChart, DeviceUsageChart, loadGraphBreakdown, type Breakdown, type Unit } from '@/components/UsageChart'
 import { DeviceSearchModal } from '@/components/DeviceSearchModal'
 import { ContextExplorer } from '@/components/ContextExplorer'
 import { WorkflowPanel, hasWorkflowContent } from '@/components/WorkflowPanel'
@@ -294,17 +294,267 @@ function DeviceView({ payload, isRemote, unit }: { payload?: Payload; isRemote: 
   )
 }
 
-function GraphView({ payload, unit }: { payload?: Payload; unit: Unit }) {
+const GRAPH_TOP_SEGMENTS = 6
+const GRAPH_OTHER_COLOR = 'var(--chart-10)'
+
+function GraphBreakdownTotals({ payload, breakdown, unit }: { payload: Payload; breakdown: Breakdown; unit: Unit }) {
+  const timeline = payload.history.timeline
+  if (!timeline) return null
+  const rowMetadata = breakdown === 'sessions' ? timeline.sessionSeries : timeline.modelSeries
+  const segMetadata = breakdown === 'sessions' ? timeline.modelSeries : timeline.sessionSeries
+  const rowLabels = new Map(rowMetadata.map((item) => [item.id, item.label]))
+  const segLabels = new Map(segMetadata.map((item) => [item.id, item.label]))
+  // Backend keeps the real session identity on session series entries
+  // (GranularSeries.sessionId/provider); the public display id stays a
+  // `session_N` key. Read through a narrow cast so older peers without the
+  // fields keep rendering their label-only rows.
+  const identities = new Map(
+    rowMetadata.map((item) => {
+      const entry = item as { id: string; sessionId?: unknown; provider?: unknown }
+      return [entry.id, {
+        sessionId: typeof entry.sessionId === 'string' ? entry.sessionId : undefined,
+        provider: typeof entry.provider === 'string' ? entry.provider : undefined,
+      }]
+    }),
+  )
+  const fmt = unit === 'tokens' ? fmtTokens : usd
+  const cross = timeline.cross ?? []
+  const isBackendOther = (id: string) => id === 'session_other' || id === 'model_other'
+  const rowNameFor = (id: string) => {
+    const raw = rowLabels.get(id) ?? (id.endsWith('_other') ? 'Other' : id)
+    return breakdown === 'models' ? formatModelLabel(raw) : raw
+  }
+  const segNameFor = (id: string) => {
+    if (id === 'display_other') return 'Other'
+    const raw = segLabels.get(id) ?? (id.endsWith('_other') ? 'Other' : id)
+    return breakdown === 'sessions' ? formatModelLabel(raw) : raw
+  }
+
+  if (cross.length > 0 && rowMetadata.length > 0 && segMetadata.length > 0) {
+    const rowTotals = new Map<string, number>()
+    const segTotals = new Map<string, number>()
+    for (const cell of cross) {
+      const rowId = breakdown === 'sessions' ? cell.sessionId : cell.modelId
+      const segId = breakdown === 'sessions' ? cell.modelId : cell.sessionId
+      const amount = unit === 'tokens' ? cell.tokens : cell.cost
+      if (amount <= 0) continue
+      rowTotals.set(rowId, (rowTotals.get(rowId) ?? 0) + amount)
+      segTotals.set(segId, (segTotals.get(segId) ?? 0) + amount)
+    }
+    const topSegIds = [...segTotals.entries()]
+      .filter(([id, value]) => value > 0 && !isBackendOther(id))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, GRAPH_TOP_SEGMENTS)
+      .map(([id]) => id)
+    const topSegSet = new Set(topSegIds)
+    const segColors = new Map<string, string>()
+    topSegIds.forEach((id, index) => {
+      const color = breakdown === 'sessions'
+        ? chartColorForModel(segLabels.get(id) ?? id, index)
+        : CHART_COLORS[index % CHART_COLORS.length]!
+      segColors.set(id, color)
+    })
+    segColors.set('display_other', GRAPH_OTHER_COLOR)
+    const cellsByRow = new Map<string, Map<string, number>>()
+    for (const cell of cross) {
+      const rowId = breakdown === 'sessions' ? cell.sessionId : cell.modelId
+      const segId = breakdown === 'sessions' ? cell.modelId : cell.sessionId
+      const amount = unit === 'tokens' ? cell.tokens : cell.cost
+      if (amount <= 0) continue
+      if (!rowTotals.get(rowId)) continue
+      const key = topSegSet.has(segId) ? segId : 'display_other'
+      const perRow = cellsByRow.get(rowId) ?? new Map<string, number>()
+      // Fold the backend `*_other` remainder and the long tail into the same
+      // display Other so each call counts once.
+      perRow.set(key, (perRow.get(key) ?? 0) + amount)
+      cellsByRow.set(rowId, perRow)
+    }
+    const rows = [...rowTotals.entries()]
+      .filter(([, value]) => value > 0)
+      .sort((a, b) => b[1] - a[1])
+      .map(([rowId, value]) => {
+        const perRow = cellsByRow.get(rowId) ?? new Map<string, number>()
+        const segments = [...perRow.entries()]
+          .filter(([, segValue]) => segValue > 0)
+          .sort((a, b) => {
+            const orderFor = (id: string) => id === 'display_other' ? Number.MAX_SAFE_INTEGER : topSegIds.indexOf(id)
+            return orderFor(a[0]) - orderFor(b[0])
+          })
+          .map(([segId, segValue]) => ({
+            segId,
+            name: segNameFor(segId),
+            value: segValue,
+            color: segColors.get(segId) ?? GRAPH_OTHER_COLOR,
+          }))
+        const identity = identities.get(rowId)
+        const href =
+          breakdown === 'sessions' && identity?.provider === 'codex' && identity.sessionId
+            ? `codex://threads/${encodeURIComponent(identity.sessionId)}`
+            : undefined
+        return { rowId, name: rowNameFor(rowId), value, segments, href }
+      })
+    const total = rows.reduce((sum, row) => sum + row.value, 0)
+    const max = Math.max(...rows.map((row) => row.value), 1)
+    return (
+      <div className="mt-3">
+        <Panel title={breakdown === 'sessions' ? 'By session' : 'By model'}>
+          {rows.length === 0 ? (
+            <div className="py-8 text-center text-sm text-tertiary-foreground">No data.</div>
+          ) : (
+            <div className="flex flex-col gap-2.5">
+              {rows.map((row) => {
+                const barPct = Math.max(2, Math.round((row.value / max) * 100))
+                const share = total ? Math.round((row.value / total) * 100) + '%' : ''
+                const labelView = (
+                  <div className="truncate text-foreground" title={row.name}>
+                    {row.name}
+                  </div>
+                )
+                return (
+                  <div key={row.rowId} className="grid grid-cols-[minmax(80px,292px)_1fr_auto] items-center gap-3 text-sm">
+                    {row.href ? (
+                      <a
+                        href={row.href}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={`${row.name} · open Codex session`}
+                        className="truncate text-foreground underline decoration-border underline-offset-2 hover:text-primary hover:decoration-primary"
+                      >
+                        {row.name}
+                      </a>
+                    ) : (
+                      labelView
+                    )}
+                    <div className="h-2 overflow-hidden rounded-full bg-interactive-secondary">
+                      <div className="flex h-full rounded-full" style={{ width: barPct + '%' }}>
+                        {row.segments.map((seg) => {
+                          const segPct = row.value ? (seg.value / row.value) * 100 : 0
+                          const withinRow = row.value ? Math.round((seg.value / row.value) * 100) + '%' : ''
+                          return (
+                            <div
+                              key={seg.segId}
+                              title={`${seg.name} · ${fmt(seg.value)} · ${withinRow}`}
+                              style={{ width: segPct + '%', background: seg.color }}
+                            />
+                          )
+                        })}
+                      </div>
+                    </div>
+                    <div className="min-w-[88px] text-right tabular-nums text-tertiary-foreground">
+                      <span className="font-medium text-foreground">{fmt(row.value)}</span> {share}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </Panel>
+      </div>
+    )
+  }
+
+  const metadata = rowMetadata
+  const labels = rowLabels
+  const totals = new Map<string, number>()
+  for (const point of timeline.points) {
+    const values = breakdown === 'sessions' ? point.sessions : point.models
+    for (const value of values) {
+      const amount = unit === 'tokens' ? value.tokens : value.cost
+      totals.set(value.seriesId, (totals.get(value.seriesId) ?? 0) + amount)
+    }
+  }
+  const items = [...totals.entries()]
+    .filter(([, value]) => value > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([id, value]) => {
+      const identity = identities.get(id)
+      // Codex session ids are the same ids used by the local Codex app's
+      // thread deep link. Anything else (other providers, aggregated Other)
+      // stays plain text.
+      const href =
+        breakdown === 'sessions' && identity?.provider === 'codex' && identity.sessionId
+          ? `codex://threads/${encodeURIComponent(identity.sessionId)}`
+          : undefined
+      return {
+        name: labels.get(id) ?? (id.endsWith('_other') ? 'Other' : id),
+        value,
+        display: unit === 'tokens' ? fmtTokens(value) : usd(value),
+        href,
+      }
+    })
+  const total = items.reduce((sum, item) => sum + item.value, 0)
+  const max = Math.max(...items.map((i) => i.value), 1)
   return (
-    <Card className="h-[calc(100vh-115px)] min-h-[440px] overflow-hidden max-md:h-[calc(100dvh-170px)] max-md:min-h-[360px]">
-      <div className="flex h-full min-h-0 flex-col px-3 pb-3 pt-4">
+    <div className="mt-3">
+      <Panel title={breakdown === 'sessions' ? 'By session' : 'By model'}>
+        {items.length === 0 ? (
+          <div className="py-8 text-center text-sm text-tertiary-foreground">No data.</div>
+        ) : (
+          <div className="flex flex-col gap-2.5">
+            {items.map((it) => {
+              const pct = Math.max(2, Math.round((it.value / max) * 100))
+              const share = total ? Math.round((it.value / total) * 100) + '%' : ''
+              // Keep the breakdown label column wide enough to show roughly
+              // twice the current session-name text without crowding values.
+              const label = (
+                <div className="truncate text-foreground" title={it.name}>
+                  {it.name}
+                </div>
+              )
+              return (
+                <div key={it.name} className="grid grid-cols-[minmax(80px,292px)_1fr_auto] items-center gap-3 text-sm">
+                  {it.href ? (
+                    <a
+                      href={it.href}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={`${it.name} · open Codex session`}
+                      className="truncate text-foreground underline decoration-border underline-offset-2 hover:text-primary hover:decoration-primary"
+                    >
+                      {it.name}
+                    </a>
+                  ) : (
+                    label
+                  )}
+                  <div className="h-2 overflow-hidden rounded-full bg-interactive-secondary">
+                    <div
+                      className="h-full rounded-full"
+                      style={{ width: pct + '%', background: 'linear-gradient(90deg, var(--color-chart-1), var(--color-chart-4))' }}
+                    />
+                  </div>
+                  <div className="min-w-[88px] text-right tabular-nums text-tertiary-foreground">
+                    <span className="font-medium text-foreground">{it.display}</span> {share}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </Panel>
+    </div>
+  )
+}
+
+function GraphView({ payload, unit, breakdown, onBreakdownChange }: { payload?: Payload; unit: Unit; breakdown: Breakdown; onBreakdownChange: (breakdown: Breakdown) => void }) {
+  return (
+    <>
+      <Card className="h-[calc(100vh-115px)] min-h-[440px] overflow-hidden max-md:h-[calc(100dvh-170px)] max-md:min-h-[360px]">
+        <div className="flex h-full min-h-0 flex-col px-3 pb-3 pt-4">
         {!payload ? (
           <Skeleton className="h-full min-h-[320px]" />
         ) : (
-          <GranularUsageChart daily={payload.history.daily} timeline={payload.history.timeline} unit={unit} />
+          <GranularUsageChart
+            daily={payload.history.daily}
+            timeline={payload.history.timeline}
+            unit={unit}
+            selectedBreakdown={breakdown}
+            onBreakdownChange={onBreakdownChange}
+          />
         )}
-      </div>
-    </Card>
+        </div>
+      </Card>
+      {payload && <GraphBreakdownTotals payload={payload} breakdown={breakdown} unit={unit} />}
+    </>
   )
 }
 
@@ -492,6 +742,7 @@ export function App() {
   const [provider, setProvider] = useState(() => savedState.provider ?? 'all')
   const [view, setView] = useState<string>(() => savedState.view ?? 'all')
   const [unit, setUnit] = useState<Unit>(() => savedState.unit ?? 'cost')
+  const [graphBreakdown, setGraphBreakdown] = useState<Breakdown>(loadGraphBreakdown)
   const [searchOpen, setSearchOpen] = useState(false)
   // Mobile only: the sidebar collapses to an off-canvas drawer below md.
   // On desktop this flag is inert (the max-md: transform classes don't apply).
@@ -505,6 +756,14 @@ export function App() {
       // Storage can be disabled in embedded or private browser contexts.
     }
   }, [page, period, provider, view, unit])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('codeburn-graph-breakdown', graphBreakdown)
+    } catch {
+      // Storage can be disabled in embedded or private browser contexts.
+    }
+  }, [graphBreakdown])
 
   const qc = useQueryClient()
 
@@ -875,7 +1134,7 @@ export function App() {
             {page === 'context' ? (
               <ContextExplorer />
             ) : page === 'graph' ? (
-              <GraphView payload={graphPayload} unit={unit} />
+              <GraphView payload={graphPayload} unit={unit} breakdown={graphBreakdown} onBreakdownChange={setGraphBreakdown} />
             ) : showCombined ? (
               <CombinedView devices={devices} unit={unit} />
             ) : (

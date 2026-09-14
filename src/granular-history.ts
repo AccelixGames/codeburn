@@ -1,4 +1,7 @@
 import stripAnsi from 'strip-ansi'
+import { readFileSync } from 'fs'
+import { homedir } from 'os'
+import { join } from 'path'
 
 import type { DateRange, ProjectSummary } from './types.js'
 
@@ -16,6 +19,11 @@ const MAX_SESSION_TITLE_LENGTH = 80
 export type GranularSeries = {
   id: string
   label: string
+  // Real session identity for the sessions breakdown. Public `id` values are
+  // display keys (`session_0`, …) that fold extra series into `*_other`; this
+  // keeps the clickable Codex row resolvable against the local session index.
+  sessionId?: string
+  provider?: string
 }
 
 export type GranularValue = {
@@ -37,6 +45,18 @@ export type GranularHistory = {
   modelSeries: GranularSeries[]
   sessionSeries: GranularSeries[]
   points: GranularPoint[]
+  // Filtered-period session × model cross totals. `sessionId` and `modelId`
+  // are the public display ids (`session_N`/`model_M`, plus `*_other` for the
+  // folded remainder), so the dashboard can render one stacked row per session
+  // segmented by model and vice versa without re-aggregating buckets.
+  cross: GranularCrossTotal[]
+}
+
+export type GranularCrossTotal = {
+  sessionId: string
+  modelId: string
+  cost: number
+  tokens: number
 }
 
 type Totals = { cost: number; tokens: number }
@@ -59,6 +79,11 @@ type SessionLabelInfo = {
   projectNames: Set<string>
   sessionId: string
   titleCandidates: Map<string, SessionTitleCandidate>
+}
+
+type CodexSessionIndexEntry = {
+  id?: unknown
+  thread_name?: unknown
 }
 
 type SessionLabelEntry = {
@@ -142,6 +167,28 @@ function cleanSessionTitle(title: string | undefined): string | undefined {
   return Array.from(cleaned).slice(0, MAX_SESSION_TITLE_LENGTH).join('').trimEnd() || undefined
 }
 
+function loadCodexThreadNames(): Map<string, string> {
+  const names = new Map<string, string>()
+  const home = process.env['CODEX_HOME']?.trim() || join(homedir(), '.codex')
+  let content: string
+  try {
+    content = readFileSync(join(home, 'session_index.jsonl'), 'utf8')
+  } catch {
+    return names
+  }
+  for (const line of content.split(/\r?\n/u)) {
+    try {
+      const entry = JSON.parse(line) as CodexSessionIndexEntry
+      if (typeof entry.id !== 'string' || typeof entry.thread_name !== 'string') continue
+      const name = cleanSessionTitle(entry.thread_name)
+      if (name) names.set(entry.id, name)
+    } catch {
+      // Ignore incomplete or malformed index lines.
+    }
+  }
+  return names
+}
+
 // SessionSummary.lastTimestamp is normally an ISO timestamp, but fixtures and
 // older cache entries can be incomplete. Valid timestamps win over invalid
 // ones; two invalid values are an exact tie and are resolved alphabetically by
@@ -177,11 +224,11 @@ function preferredSessionTitle(titleCandidates: Map<string, SessionTitleCandidat
   return cleaned[0]?.title
 }
 
-// Chart legend is `max-w-40` at 10px ≈ 24–32 glyphs. A title that is unique in
+// Chart legend is `max-w-80` at 10px ≈ 48–64 glyphs. A title that is unique in
 // that window can lead; otherwise the short id must stay in the prefix or
 // truncated series look identical (the #997 class). Count code points, matching
 // the title cap — a UTF-16 slice can split an emoji and collide two titles.
-const VISIBLE_LEGEND_PREFIX = 24
+const VISIBLE_LEGEND_PREFIX = 48
 
 function visibleLegendPrefix(label: string): string {
   return Array.from(label).slice(0, VISIBLE_LEGEND_PREFIX).join('')
@@ -271,7 +318,8 @@ function projectSeries(
   kind: 'models' | 'sessions',
   totals: Map<string, Totals>,
   labels: Map<string, string>,
-): { series: GranularSeries[]; values: GranularValue[][] } {
+  sessionIdentities?: Map<string, { sessionId: string; provider: string }>,
+): { series: GranularSeries[]; values: GranularValue[][]; publicIds: Map<string, string> } {
   const selected = topSeriesKeys(totals)
   const prefix = kind === 'models' ? 'model' : 'session'
   const publicIds = new Map<string, string>()
@@ -281,7 +329,12 @@ function projectSeries(
   for (const rawKey of selected) {
     const id = `${prefix}_${index++}`
     publicIds.set(rawKey, id)
-    series.push({ id, label: labels.get(rawKey) ?? rawKey })
+    const identity = kind === 'sessions' ? sessionIdentities?.get(rawKey) : undefined
+    series.push({
+      id,
+      label: labels.get(rawKey) ?? rawKey,
+      ...(identity ? { sessionId: identity.sessionId, provider: identity.provider } : {}),
+    })
   }
 
   let hasOther = false
@@ -307,7 +360,7 @@ function projectSeries(
   })
 
   if (hasOther) series.push({ id: otherId, label: 'Other' })
-  return { series, values }
+  return { series, values, publicIds }
 }
 
 /**
@@ -323,7 +376,7 @@ export function buildGranularHistory(
   const bucketMinutes = granularBucketMinutes(range)
   const effectiveEnd = range.end.getTime() < now.getTime() ? range.end : now
   if (range.start.getTime() > effectiveEnd.getTime()) {
-    return { bucketMinutes, modelSeries: [], sessionSeries: [], points: [] }
+    return { bucketMinutes, modelSeries: [], sessionSeries: [], points: [], cross: [] }
   }
 
   const rawBuckets: RawBucket[] = []
@@ -341,8 +394,10 @@ export function buildGranularHistory(
 
   const modelTotals = new Map<string, Totals>()
   const sessionTotals = new Map<string, Totals>()
+  const crossRaw = new Map<string, Map<string, Totals>>()
   const modelLabels = new Map<string, string>()
   const sessionLabelInputs = new Map<string, SessionLabelInfo>()
+  const codexThreadNames = loadCodexThreadNames()
   let callCount = 0
 
   for (const project of projects) {
@@ -371,6 +426,9 @@ export function buildGranularHistory(
           add(bucket.sessions, sessionKey, cost, tokens)
           add(modelTotals, modelKey, cost, tokens)
           add(sessionTotals, sessionKey, cost, tokens)
+          const crossModels = crossRaw.get(sessionKey) ?? new Map<string, Totals>()
+          add(crossModels, modelKey, cost, tokens)
+          crossRaw.set(sessionKey, crossModels)
           modelLabels.set(modelKey, modelKey === '<synthetic>' ? 'Other model' : modelKey)
           // Collect raw metadata first. Titles are cleaned once per distinct
           // session-key candidate after all calls are aggregated, so a late
@@ -383,12 +441,29 @@ export function buildGranularHistory(
             titleCandidates: new Map<string, SessionTitleCandidate>(),
           }
           labelInfo.projectNames.add(projectName)
-          if (session.title !== undefined) {
+          const codexThreadName = call.provider === 'codex' ? codexThreadNames.get(session.sessionId) : undefined
+          if (codexThreadName) {
+            labelInfo.titleCandidates.set('__codex_thread_name__', {
+              title: codexThreadName,
+              lastTimestamp: session.lastTimestamp,
+            })
+          } else if (session.title !== undefined) {
             const existingTitle = labelInfo.titleCandidates.get(session.title)
             if (!existingTitle || compareTimestamps(session.lastTimestamp, existingTitle.lastTimestamp) > 0) {
               labelInfo.titleCandidates.set(session.title, {
                 title: session.title,
                 lastTimestamp: session.lastTimestamp,
+              })
+            }
+          } else if (labelInfo.titleCandidates.size === 0) {
+            // Codex and some other providers do not persist a separate session
+            // title. The first user message is the most useful human-readable
+            // fallback for the graph legend and hover tooltip.
+            const fallbackTitle = cleanSessionTitle(turn.userMessage)
+            if (fallbackTitle) {
+              labelInfo.titleCandidates.set('__first_user_message__', {
+                title: fallbackTitle,
+                lastTimestamp: turn.timestamp,
               })
             }
           }
@@ -400,12 +475,31 @@ export function buildGranularHistory(
   }
 
   if (callCount === 0) {
-    return { bucketMinutes, modelSeries: [], sessionSeries: [], points: [] }
+    return { bucketMinutes, modelSeries: [], sessionSeries: [], points: [], cross: [] }
   }
 
   const sessionLabels = buildSessionLabels(sessionLabelInputs)
+  const sessionIdentities = new Map<string, { sessionId: string; provider: string }>()
+  for (const [key, info] of sessionLabelInputs) {
+    sessionIdentities.set(key, { sessionId: info.sessionId, provider: info.provider })
+  }
   const modelProjection = projectSeries(rawBuckets, 'models', modelTotals, modelLabels)
-  const sessionProjection = projectSeries(rawBuckets, 'sessions', sessionTotals, sessionLabels)
+  const sessionProjection = projectSeries(rawBuckets, 'sessions', sessionTotals, sessionLabels, sessionIdentities)
+  // Fold the raw session × model matrix through the same public-id projection
+  // the per-bucket values use, so each call lands in exactly one public cell
+  // and the folded `*_other` remainder is never double counted.
+  const crossTotals = new Map<string, GranularCrossTotal>()
+  for (const [sessionRaw, models] of crossRaw) {
+    const sessionId = sessionProjection.publicIds.get(sessionRaw) ?? 'session_other'
+    for (const [modelRaw, value] of models) {
+      const modelId = modelProjection.publicIds.get(modelRaw) ?? 'model_other'
+      const key = `${sessionId}|${modelId}`
+      const cell = crossTotals.get(key) ?? { sessionId, modelId, cost: 0, tokens: 0 }
+      cell.cost += value.cost
+      cell.tokens += value.tokens
+      crossTotals.set(key, cell)
+    }
+  }
   return {
     bucketMinutes,
     modelSeries: modelProjection.series,
@@ -417,5 +511,6 @@ export function buildGranularHistory(
       models: modelProjection.values[i] ?? [],
       sessions: sessionProjection.values[i] ?? [],
     })),
+    cross: [...crossTotals.values()],
   }
 }

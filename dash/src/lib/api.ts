@@ -19,8 +19,9 @@ export type DailyEntry = {
   topModels: ModelDay[]
 }
 
-export type GranularSeries = { id: string; label: string }
+export type GranularSeries = { id: string; label: string; sessionId?: string; provider?: string }
 export type GranularValue = { seriesId: string; cost: number; tokens: number }
+export type GranularCrossTotal = { sessionId: string; modelId: string; cost: number; tokens: number }
 export type GranularPoint = {
   timestamp: string
   cost: number
@@ -33,6 +34,7 @@ export type GranularHistory = {
   modelSeries: GranularSeries[]
   sessionSeries: GranularSeries[]
   points: GranularPoint[]
+  cross?: GranularCrossTotal[]
 }
 
 export type Current = {
@@ -112,6 +114,12 @@ function normalizePayload(p?: Payload): Payload | undefined {
     bucketMinutes: rawTimeline.bucketMinutes ?? 1440,
     modelSeries: rawTimeline.modelSeries ?? [],
     sessionSeries: rawTimeline.sessionSeries ?? [],
+    cross: (rawTimeline.cross ?? []).map((cell) => ({
+      sessionId: cell.sessionId,
+      modelId: cell.modelId,
+      cost: cell.cost ?? 0,
+      tokens: cell.tokens ?? 0,
+    })),
     points: (rawTimeline.points ?? []).map((point) => ({
       timestamp: point.timestamp,
       cost: point.cost ?? 0,
