@@ -42,7 +42,7 @@ jobs:
             // HTML comments, must contain something.
             const body = pr.body ?? ''
             const summary = (body.split(/^## Testing/m)[0] ?? '').replace(/^## Summary/m, '').replace(/<!--[\s\S]*?-->/g, '').trim()
-            if (summary.length < 20) {
+            if (summary.length < 12) {
               await close('Closing for now: the description is still the template. Fill in what this change does and why under "Summary", then reopen. A couple of sentences is enough.')
               return
             }
@@ -50,7 +50,8 @@ jobs:
             // 2. Large first-time PRs need an issue behind them.
             const firstTimer = ['FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'NONE'].includes(pr.author_association)
             const size = (pr.additions ?? 0) + (pr.deletions ?? 0)
-            const linksIssue = /(#\d+)|(github\.com\/[^\s]+\/issues\/\d+)/.test(body)
+            // An issue reference: `#123` standing alone (not a hex colour or a heading), or an issue URL.
+            const linksIssue = /(^|[\s(])#\d{2,}\b|github\.com\/[^\s]+\/issues\/\d+/.test(body)
             if (firstTimer && size > bigChange && !linksIssue) {
               await close(`Closing for now: this is your first pull request here and it changes ${size} lines with no issue behind it. Open an issue describing the change first so we can agree on the shape before the work is written, then reopen this with the issue number in the description. Small fixes do not need this.`)
               return
