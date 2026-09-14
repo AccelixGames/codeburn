@@ -39,9 +39,9 @@ function writeJsonError(res: import('http').ServerResponse, status: number, erro
   res.end(JSON.stringify({ error }))
 }
 
-// Cap on the cached local payload, matched to the parser's own session cache
-// (parser.ts) so the assembled payload is never staler than its source data.
-const LOCAL_PAYLOAD_TTL_MS = 180_000
+// Keep the resident dashboard payload short-lived so the web client's polling
+// can observe newly written session data promptly.
+const LOCAL_PAYLOAD_TTL_MS = 60_000
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 

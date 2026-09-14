@@ -13,7 +13,7 @@ function fmtDay(d: string): string {
 }
 
 const TOP_N = 6
-const MOVING_AVERAGE_POINTS = 5
+const MOVING_AVERAGE_POINTS = 10
 
 type Series = { key: string; label: string; color: string }
 
@@ -160,7 +160,7 @@ function GranularLines({
     const chartSeries: Series[] = [...keys, 'display_total_ma'].map((key, index) => ({
       key,
       label: key === 'display_total_ma'
-        ? unit === 'tokens' ? 'Total Tokens (5-bucket avg)' : 'Total Cost (5-bucket avg)'
+        ? unit === 'tokens' ? 'Total Tokens (10-bucket avg)' : 'Total Cost (10-bucket avg)'
         : key === 'display_other'
         ? 'Other'
         : breakdown === 'models'

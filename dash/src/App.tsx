@@ -464,6 +464,7 @@ function ThemeToggle() {
 }
 
 const DASHBOARD_STATE_KEY = 'codeburn-dashboard-state'
+const DASHBOARD_REFRESH_INTERVAL_MS = 60_000
 type DashboardPage = 'usage' | 'context' | 'graph'
 type DashboardState = {
   page?: DashboardPage
@@ -517,7 +518,8 @@ export function App() {
     // When devices are paired, re-pull periodically so a device that briefly
     // dropped (asleep/network blip) reappears on its own instead of staying
     // gone until you switch tabs.
-    refetchInterval: (q) => ((q.state.data?.devices?.some((d) => !d.local) ?? false) ? 20000 : 300_000),
+    refetchInterval: (q) => ((q.state.data?.devices?.some((d) => !d.local) ?? false) ? 20000 : DASHBOARD_REFRESH_INTERVAL_MS),
+    refetchIntervalInBackground: true,
   })
 
   const { data: shareInfo } = useQuery({
