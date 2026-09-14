@@ -433,6 +433,11 @@
 "1 running" = "1 running";
 "%lld running" = "%lld running";
 "%@ left" = "%@ left";
+/* Tooltip on a live-session row. %@ is the terminal application's own name,
+   left verbatim. The second form is used where the terminal cannot select the
+   session's tab, only come forward. */
+"Open in %@" = "Open in %@";
+"Bring %@ to front" = "Bring %@ to front";
 "burned" = "burned";
 "today %@ of %@" = "today %@ of %@";
 "no budget set" = "no budget set";

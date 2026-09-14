@@ -157,7 +157,7 @@ enum UsageDataChangeGuard {
         return attributes[.modificationDate] as? Date
     }
 
-    private static func claudeConfigDirectories(environment: [String: String], homeDirectory: String) -> [String] {
+    static func claudeConfigDirectories(environment: [String: String], homeDirectory: String) -> [String] {
         if let multi = environment["CLAUDE_CONFIG_DIRS"], !multi.isEmpty {
             return multi.split(separator: ":").map { expand(String($0), homeDirectory: homeDirectory) }
         }

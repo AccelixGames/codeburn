@@ -737,6 +737,10 @@ struct CapacityDockDetailView: View {
     let quota: (CapacityDockProvider) -> QuotaSummary?
     let onConnect: (CapacityDockProvider) -> Void
     @Environment(AppStore.self) private var store
+    /// Session id -> the terminal its process was found in. A row missing from
+    /// here stays inert; resolution reads files and the process table, so it
+    /// happens once per session list rather than per render.
+    @State private var sessionFocusTargets: [String: SessionFocusTarget] = [:]
 
     var body: some View {
         let bubbleShape = CapacityDockBubbleShape(
@@ -940,6 +944,13 @@ struct CapacityDockDetailView: View {
         .padding(.top, CapacityDockGlance.sectionPadTop * s)
         .padding(.bottom, CapacityDockGlance.sectionPadBottom * s)
         .padding(.horizontal, CapacityDockGlance.contentInset * s)
+        .task(id: sessions.map(\.id)) {
+            sessionFocusTargets = await Task.detached(priority: .utility) {
+                sessions.reduce(into: [String: SessionFocusTarget]()) { targets, session in
+                    targets[session.id] = SessionFocus.target(for: session)
+                }
+            }.value
+        }
     }
 
     private func sessionsTrailing(_ count: Int) -> String {
@@ -1008,6 +1019,7 @@ struct CapacityDockDetailView: View {
         )
         // A session waiting on the user recedes; one that is generating does not.
         .opacity(session.isIdle ? 0.55 : 1)
+        .modifier(SessionFocusAffordance(target: sessionFocusTargets[session.id]))
     }
 
     /// The pill itself is the context gauge: a tinted band over the first N% of
@@ -1314,6 +1326,30 @@ struct CapacityDockDetailView: View {
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+}
+
+/// Click-to-raise on a session row whose process was found. A row that resolved
+/// to nothing keeps exactly the layout, the cursor and the inertness it had, so
+/// the affordance never promises a window that is not there.
+private struct SessionFocusAffordance: ViewModifier {
+    let target: SessionFocusTarget?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let target {
+            content
+                .contentShape(Rectangle())
+                .help(target.tooltip)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityHint(target.tooltip)
+                .onHover { hovering in
+                    if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                }
+                .onTapGesture { SessionFocus.raise(target) }
+        } else {
+            content
         }
     }
 }
