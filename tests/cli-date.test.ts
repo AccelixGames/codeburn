@@ -99,6 +99,19 @@ describe('getDateRange', () => {
   })
 })
 
+describe('periodInfoFromQuery', () => {
+  it('resolves the web-only day period to a rolling last-2-hours range', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 8, 15, 0, 3, 0))
+
+    const { range, label } = periodInfoFromQuery({ period: 'day' }, 'today')
+
+    expect(label).toBe('Last 2 Hours')
+    expect(range.end.getTime() - range.start.getTime()).toBe(2 * 60 * 60 * 1000)
+    expect(range.end).toEqual(new Date(2026, 8, 15, 0, 3, 0))
+  })
+})
+
 describe('PERIODS / PERIOD_LABELS', () => {
   it('exposes the expected period set', () => {
     expect(PERIODS).toEqual(['today', 'week', '30days', 'month', 'all', 'lifetime'])

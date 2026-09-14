@@ -2,6 +2,7 @@ import stripAnsi from 'strip-ansi'
 
 import type { DateRange, ProjectSummary } from './types.js'
 
+const ONE_MINUTE = 1
 const FIVE_MINUTES = 5
 const ONE_HOUR = 60
 const ONE_DAY = 24 * 60
@@ -73,6 +74,7 @@ function nonNegative(value: number): number {
 
 export function granularBucketMinutes(range: DateRange): number {
   const durationMs = Math.max(0, range.end.getTime() - range.start.getTime())
+  if (durationMs <= 2 * ONE_HOUR * MINUTE_MS) return ONE_MINUTE
   if (durationMs <= 48 * ONE_HOUR * MINUTE_MS) return FIVE_MINUTES
   // Hourly beyond ~8 days means 200+ points of overlapping spikes; daily
   // buckets keep month-scale charts readable.

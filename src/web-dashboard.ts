@@ -153,7 +153,7 @@ export async function runWebDashboard(opts: {
   // tab and the costliest parse. Failures are ignored - a prefetch is never
   // load-bearing.
   const prefetchPeriods = async (): Promise<void> => {
-    for (const period of ['today', 'week', '30days', 'month', 'all', 'lifetime']) {
+    for (const period of ['today', 'day', 'week', '30days', 'month', 'all', 'lifetime']) {
       try { await getLocalPayload(period, opts.provider, opts.from, opts.to) } catch { /* not load-bearing */ }
     }
   }

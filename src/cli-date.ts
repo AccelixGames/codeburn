@@ -228,5 +228,13 @@ export function periodInfoFromQuery(
   if (customRange) {
     return { range: customRange, label: formatDateRangeLabel(q.from, q.to) }
   }
-  return getDateRange(parsePeriodOrThrow(q.period ?? defaultPeriod))
+  // Web-only rolling window: unlike `today`, this stays full when the clock
+  // is shortly after midnight. The dashboard polls it repeatedly, so the
+  // range advances with the current time on each refresh.
+  const period = q.period ?? defaultPeriod
+  if (period === 'day') {
+    const end = new Date()
+    return { range: { start: new Date(end.getTime() - 2 * 60 * 60 * 1000), end }, label: 'Last 2 Hours' }
+  }
+  return getDateRange(parsePeriodOrThrow(period))
 }

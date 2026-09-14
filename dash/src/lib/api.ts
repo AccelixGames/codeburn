@@ -1,4 +1,4 @@
-export type Period = 'today' | 'week' | '30days' | 'month' | 'all' | 'lifetime'
+export type Period = 'today' | 'day' | 'week' | '30days' | 'month' | 'all' | 'lifetime'
 
 export type ModelDay = {
   name: string
@@ -203,6 +203,7 @@ export async function fetchDevices(period: Period, provider: string): Promise<{ 
 // these can never drift from the CLI's totals.
 export const PERIODS: Array<{ key: Period; label: string }> = [
   { key: 'today', label: 'Today' },
+  { key: 'day', label: 'Day' },
   { key: 'week', label: '7 days' },
   { key: '30days', label: '30 days' },
   { key: 'month', label: 'Month' },

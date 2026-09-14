@@ -96,10 +96,11 @@ function sumSeries(history: GranularHistory, kind: 'models' | 'sessions', series
 }
 
 describe('granular history', () => {
-  it('selects 5-minute, hourly, and daily buckets from the requested duration', () => {
+  it('selects 1-minute, 5-minute, hourly, and daily buckets from the requested duration', () => {
     const start = new Date('2026-07-01T00:00:00.000Z')
     const range = (hours: number) => ({ start, end: new Date(start.getTime() + hours * 60 * 60 * 1000) })
 
+    expect(granularBucketMinutes(range(2))).toBe(1)
     expect(granularBucketMinutes(range(24))).toBe(5)
     expect(granularBucketMinutes(range(48))).toBe(5)
     expect(granularBucketMinutes(range(48.01))).toBe(60)
@@ -404,7 +405,7 @@ describe('granular history', () => {
     expect(labels.slice().sort()).toEqual(labelsFor([shaped, beta, alpha]).slice().sort())
   })
 
-  it('aligns quarter-hour buckets to local wall time in a fractional-offset timezone', () => {
+  it('aligns minute buckets to local wall time in a fractional-offset timezone', () => {
     const previousTz = process.env['TZ']
     process.env['TZ'] = 'Asia/Kathmandu'
     try {
@@ -416,7 +417,7 @@ describe('granular history', () => {
       ], { start, end }, end)
       const active = history.points.find(point => point.cost > 0)!
 
-      expect(active.timestamp).toBe(new Date(2026, 6, 15, 0, 15).toISOString())
+      expect(active.timestamp).toBe(new Date(2026, 6, 15, 0, 17).toISOString())
     } finally {
       if (previousTz === undefined) delete process.env['TZ']
       else process.env['TZ'] = previousTz

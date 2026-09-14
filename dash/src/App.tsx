@@ -294,6 +294,20 @@ function DeviceView({ payload, isRemote, unit }: { payload?: Payload; isRemote: 
   )
 }
 
+function GraphView({ payload, unit }: { payload?: Payload; unit: Unit }) {
+  return (
+    <Card className="h-[calc(100vh-115px)] min-h-[440px] overflow-hidden max-md:h-[calc(100dvh-170px)] max-md:min-h-[360px]">
+      <div className="flex h-full min-h-0 flex-col px-3 pb-3 pt-4">
+        {!payload ? (
+          <Skeleton className="h-full min-h-[320px]" />
+        ) : (
+          <GranularUsageChart daily={payload.history.daily} timeline={payload.history.timeline} unit={unit} />
+        )}
+      </div>
+    </Card>
+  )
+}
+
 // The "All devices" view: combined totals plus a per-device breakdown. Devices
 // are summed for display only; nothing is merged on the server.
 function CombinedView({ devices, unit }: { devices: DeviceUsage[]; unit: Unit }) {
@@ -449,17 +463,47 @@ function ThemeToggle() {
   )
 }
 
+const DASHBOARD_STATE_KEY = 'codeburn-dashboard-state'
+type DashboardPage = 'usage' | 'context' | 'graph'
+type DashboardState = {
+  page?: DashboardPage
+  period?: Period
+  provider?: string
+  view?: string
+  unit?: Unit
+}
+
+function loadDashboardState(): DashboardState {
+  try {
+    const raw = localStorage.getItem(DASHBOARD_STATE_KEY)
+    if (!raw) return {}
+    const value = JSON.parse(raw) as DashboardState
+    return value && typeof value === 'object' ? value : {}
+  } catch {
+    return {}
+  }
+}
+
 export function App() {
-  const [page, setPage] = useState<'usage' | 'context'>('usage')
-  const [period, setPeriod] = useState<Period>('today')
-  const [provider, setProvider] = useState('all')
-  const [view, setView] = useState<string>('all')
-  const [unit, setUnit] = useState<Unit>('cost')
+  const [savedState] = useState(loadDashboardState)
+  const [page, setPage] = useState<DashboardPage>(() => savedState.page ?? 'usage')
+  const [period, setPeriod] = useState<Period>(() => savedState.period ?? 'today')
+  const [provider, setProvider] = useState(() => savedState.provider ?? 'all')
+  const [view, setView] = useState<string>(() => savedState.view ?? 'all')
+  const [unit, setUnit] = useState<Unit>(() => savedState.unit ?? 'cost')
   const [searchOpen, setSearchOpen] = useState(false)
   // Mobile only: the sidebar collapses to an off-canvas drawer below md.
   // On desktop this flag is inert (the max-md: transform classes don't apply).
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [responded, setResponded] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(DASHBOARD_STATE_KEY, JSON.stringify({ page, period, provider, view, unit }))
+    } catch {
+      // Storage can be disabled in embedded or private browser contexts.
+    }
+  }, [page, period, provider, view, unit])
 
   const qc = useQueryClient()
 
@@ -565,6 +609,8 @@ export function App() {
   const showCombined = multi && view === 'all'
   const viewTitle = showCombined ? 'All devices' : (primary ? primary.name + (primary.local ? ' · this Mac' : '') : 'Loading…')
   const label = local?.payload?.current?.label ?? ''
+  const graphDevice = view === 'all' ? (local ?? devices[0]) : devices.find((d) => d.id === view)
+  const graphPayload = graphDevice?.payload
 
   return (
     <div className="min-h-screen bg-outer-background p-2.5 max-md:min-h-[100dvh]">
@@ -591,24 +637,30 @@ export function App() {
           </div>
 
           <div className="ml-6 flex shrink-0 rounded-md border border-border bg-interactive-secondary p-0.5 max-md:ml-2">
-            {(['usage', 'context'] as const).map((pg) => (
+            {(['usage', 'context', 'graph'] as const).map((pg) => (
               <button
                 key={pg}
                 type="button"
-                onClick={() => setPage(pg)}
+                onClick={() => {
+                  if (pg === 'graph') {
+                    autoPeriod.current = false
+                    setPeriod('today')
+                  }
+                  setPage(pg)
+                }}
                 className={cn(
                   'rounded-[5px] px-3 py-1 text-xs font-medium whitespace-nowrap transition-colors',
                   page === pg ? 'bg-active-primary text-foreground shadow-sm' : 'text-tertiary-foreground hover:text-foreground',
                 )}
               >
-                {pg === 'usage' ? 'Usage' : 'Context'}
+                {pg === 'usage' ? 'Usage' : pg === 'context' ? 'Context' : 'Graph'}
               </button>
             ))}
           </div>
 
           {/* All widths: min-w-0 + overflow-x-auto contain mid-width overflow. Below md: full-width second row so ~390px isn't a ~22px clip. */}
           <div className="ml-auto flex min-w-0 items-center gap-2 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden max-md:ml-0 max-md:w-full max-md:basis-full">
-            {page === 'usage' && (
+            {(page === 'usage' || page === 'graph') && (
             <>
             <div className="flex shrink-0 rounded-md border border-border bg-interactive-secondary p-0.5">
               {PERIODS.map((p) => (
@@ -652,6 +704,21 @@ export function App() {
                 </option>
               ))}
             </select>
+            {page === 'graph' && (
+              <select
+                value={view}
+                onChange={(e) => setView(e.target.value)}
+                aria-label="Graph device"
+                className="shrink-0 rounded-md border border-border bg-card px-3 py-1.5 text-xs text-foreground outline-none max-md:min-h-9"
+              >
+                <option value="all">{multi ? 'All devices' : 'This device'}</option>
+                {devices.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}{d.local ? ' · this Mac' : ''}
+                  </option>
+                ))}
+              </select>
+            )}
             </>
             )}
             <ThemeToggle />
@@ -667,7 +734,7 @@ export function App() {
               className="fixed inset-0 z-30 bg-black/40 md:hidden"
             />
           )}
-          <aside
+          {page !== 'graph' && <aside
             id="dashboard-sidebar"
             className={cn(
               'flex w-60 shrink-0 flex-col gap-5 overflow-y-auto rounded-md border border-border bg-card p-5',
@@ -793,18 +860,20 @@ export function App() {
                 </a>
               </div>
             </div>
-          </aside>
+          </aside>}
 
           <main className="min-w-0 flex-1 overflow-y-auto pr-0.5">
             <div className="mb-3 flex items-baseline justify-between">
-              <h1 className="font-display text-xl tracking-tight text-foreground">{page === 'context' ? 'Context' : viewTitle}</h1>
-              <span className="text-xs text-tertiary-foreground">{page === 'usage' ? label : ''}</span>
+              <h1 className="font-display text-xl tracking-tight text-foreground">{page === 'context' ? 'Context' : page === 'graph' ? 'Graph' : viewTitle}</h1>
+              <span className="text-xs text-tertiary-foreground">{page === 'usage' || page === 'graph' ? label : ''}</span>
             </div>
 
             {page === 'usage' && <IndexingNotice payload={primary?.payload} />}
 
             {page === 'context' ? (
               <ContextExplorer />
+            ) : page === 'graph' ? (
+              <GraphView payload={graphPayload} unit={unit} />
             ) : showCombined ? (
               <CombinedView devices={devices} unit={unit} />
             ) : (

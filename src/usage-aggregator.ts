@@ -731,7 +731,8 @@ export async function buildDurablePeriod(periodInfo: PeriodInfo, opts: Aggregate
   const todayStr = toDateString(todayStart)
   const rangeStartStr = toDateString(periodInfo.range.start)
   const rangeEndStr = toDateString(periodInfo.range.end)
-  const isTodayOnly = rangeStartStr === todayStr && rangeEndStr === todayStr
+  const isRollingTwoHour = periodInfo.label === 'Last 2 Hours'
+  const isTodayOnly = !isRollingTwoHour && rangeStartStr === todayStr && rangeEndStr === todayStr
 
   // The shared daily cache is hydrated only by an all-provider request. A
   // provider tab must not turn into a hidden all-provider scan on a cold or

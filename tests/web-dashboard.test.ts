@@ -86,7 +86,16 @@ describe('web dashboard server: invalid query returns 400 without exiting', () =
     const ok = await fetch(`${base}/api/usage?period=today`)
     expect(ok.status).toBe(200)
     const payload = await ok.json() as { history: { timeline?: { bucketMinutes: number; points: unknown[] } } }
-    expect(payload.history.timeline?.bucketMinutes).toBe(15)
+    expect(payload.history.timeline?.bucketMinutes).toBe(5)
+    expect(Array.isArray(payload.history.timeline?.points)).toBe(true)
+  })
+
+  it('serves the web-only day period as a rolling two-hour, one-minute timeline', async () => {
+    const response = await fetch(`${base}/api/usage?period=day`)
+    expect(response.status).toBe(200)
+    const payload = await response.json() as { current: { label: string }; history: { timeline?: { bucketMinutes: number; points: unknown[] } } }
+    expect(payload.current.label).toBe('Last 2 Hours')
+    expect(payload.history.timeline?.bucketMinutes).toBe(1)
     expect(Array.isArray(payload.history.timeline?.points)).toBe(true)
   })
 

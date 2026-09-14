@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
 import type { DailyEntry, DeviceUsage, GranularHistory } from '@/lib/api'
@@ -13,18 +13,22 @@ function fmtDay(d: string): string {
 }
 
 const TOP_N = 6
+const MOVING_AVERAGE_POINTS = 5
 
 type Series = { key: string; label: string; color: string }
 
-function makeTooltip(labels: Record<string, string>, fmt: (n: number) => string, formatPeriod = fmtDay) {
+function makeTooltip(labels: Record<string, string>, fmt: (n: number) => string, formatPeriod = fmtDay, totalKey?: string, totalValueKey?: string) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return function ChartTooltip({ active, payload, label: lbl }: any) {
     if (!active || !payload?.length) return null
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const items = payload.filter((p: any) => p.value > 0).sort((a: any, b: any) => b.value - a.value)
+    const items = payload.filter((p: any) => p.value > 0 && p.dataKey !== totalKey).sort((a: any, b: any) => b.value - a.value)
     if (!items.length) return null
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const total = items.reduce((s: number, p: any) => s + p.value, 0)
+    const totalItem = totalKey ? payload.find((p: any) => p.dataKey === totalKey) : undefined
+    const total = totalValueKey && totalItem?.payload?.[totalValueKey] != null
+      ? totalItem.payload[totalValueKey]
+      : totalItem?.value ?? items.reduce((s: number, p: any) => s + p.value, 0)
     return (
       <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-xl ring-1 ring-border">
         <div className="mb-1.5 font-medium text-foreground">{formatPeriod(String(lbl))}</div>
@@ -53,6 +57,16 @@ function makeTooltip(labels: Record<string, string>, fmt: (n: number) => string,
 }
 
 type Breakdown = 'sessions' | 'models'
+const BREAKDOWN_STORAGE_KEY = 'codeburn-graph-breakdown'
+
+function loadBreakdown(): Breakdown {
+  try {
+    const saved = localStorage.getItem(BREAKDOWN_STORAGE_KEY)
+    return saved === 'models' ? 'models' : 'sessions'
+  } catch {
+    return 'sessions'
+  }
+}
 
 function pad2(value: number): string {
   return String(value).padStart(2, '0')
@@ -135,16 +149,26 @@ function GranularLines({
         if (!(key in row)) continue
         row[key] = (row[key] as number) + (unit === 'tokens' ? value.tokens : value.cost)
       }
+      row.display_total = unit === 'tokens' ? point.tokens : point.cost
       return row
     })
-    const chartSeries: Series[] = keys.map((key, index) => ({
+    rowData.forEach((row, index) => {
+      const start = Math.max(0, index - MOVING_AVERAGE_POINTS + 1)
+      const values = rowData.slice(start, index + 1).map(item => Number(item.display_total ?? 0))
+      row.display_total_ma = values.reduce((sum, value) => sum + value, 0) / values.length
+    })
+    const chartSeries: Series[] = [...keys, 'display_total_ma'].map((key, index) => ({
       key,
-      label: key === 'display_other'
+      label: key === 'display_total_ma'
+        ? unit === 'tokens' ? 'Total Tokens (5-bucket avg)' : 'Total Cost (5-bucket avg)'
+        : key === 'display_other'
         ? 'Other'
         : breakdown === 'models'
           ? label(metadataById.get(key) ?? key)
           : metadataById.get(key) ?? key,
-      color: breakdown === 'models'
+      color: key === 'display_total_ma'
+        ? 'rgba(255, 255, 255, 0.45)'
+        : breakdown === 'models'
         ? chartColorForModel(key, index)
         : CHART_COLORS[index % CHART_COLORS.length]!,
     }))
@@ -171,7 +195,8 @@ function GranularLines({
 
   const fmt = unit === 'tokens' ? fmtTokens : usd
   const axisFmt = (value: number | string) => (unit === 'tokens' ? fmtTokens(Number(value)) : fmtTimelineUsd(value))
-  const Tip = makeTooltip(labels, fmt, value => fmtTimelineTooltip(value, timeline.bucketMinutes))
+  const Tip = makeTooltip(labels, fmt, value => fmtTimelineTooltip(value, timeline.bucketMinutes), 'display_total_ma', 'display_total')
+  const xTickInterval = Math.max(0, Math.ceil(rows.length / 12) - 1)
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -192,7 +217,7 @@ function GranularLines({
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              interval="equidistantPreserveStart"
+              interval={xTickInterval}
               minTickGap={36}
               tick={{ fontSize: 11, fill: 'var(--color-tertiary-foreground)' }}
               tickFormatter={(value) => fmtTimelineTick(String(value), timeline.bucketMinutes)}
@@ -211,7 +236,7 @@ function GranularLines({
                 type="linear"
                 dataKey={item.key}
                 stroke={item.color}
-                strokeWidth={2}
+                strokeWidth={item.key === 'display_total_ma' ? 3 : 2}
                 dot={false}
                 activeDot={{ r: 3 }}
                 isAnimationActive={false}
@@ -317,7 +342,14 @@ export function GranularUsageChart({
   timeline?: GranularHistory
   unit?: Unit
 }) {
-  const [selectedBreakdown, setSelectedBreakdown] = useState<Breakdown>('sessions')
+  const [selectedBreakdown, setSelectedBreakdown] = useState<Breakdown>(loadBreakdown)
+  useEffect(() => {
+    try {
+      localStorage.setItem(BREAKDOWN_STORAGE_KEY, selectedBreakdown)
+    } catch {
+      // Storage can be disabled in embedded or private browser contexts.
+    }
+  }, [selectedBreakdown])
   if (!timeline) return <LegacyUsageChart daily={daily} unit={unit} />
 
   const hasSessions = timeline.sessionSeries.length > 0
