@@ -10,7 +10,7 @@ const FIVE_MINUTES = 5
 const ONE_HOUR = 60
 const ONE_DAY = 24 * 60
 const MINUTE_MS = 60 * 1000
-const MAX_SERIES_PER_METRIC = 6
+const MAX_SERIES_PER_METRIC = 4
 // Keep metadata bounded for the legend and tooltip: 80 characters preserves a
 // useful title without letting the parser's 200-char transcript cap dominate
 // either UI surface.
@@ -365,7 +365,7 @@ function projectSeries(
 
 /**
  * Build a selected-period timeline from real call timestamps. The result is
- * bounded to the top six cost series plus the top six token series for each
+ * bounded to the top four cost series plus the top four token series for each
  * breakdown; everything else is retained in an aggregate Other series.
  */
 export function buildGranularHistory(

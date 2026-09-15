@@ -319,9 +319,9 @@ describe('granular history', () => {
     const history = buildGranularHistory([project(sessions)], { start, end }, end)
     const point = history.points.find(row => row.cost > 0)!
 
-    // Six top-by-cost + six disjoint top-by-token + one Other line.
-    expect(history.modelSeries).toHaveLength(13)
-    expect(history.sessionSeries).toHaveLength(13)
+    // Four top-by-cost + four disjoint top-by-token + one Other line.
+    expect(history.modelSeries).toHaveLength(9)
+    expect(history.sessionSeries).toHaveLength(9)
     expect(history.modelSeries.at(-1)).toEqual({ id: 'model_other', label: 'Other' })
     expect(history.sessionSeries.at(-1)).toEqual({ id: 'session_other', label: 'Other' })
     expect(point.models.reduce((sum, value) => sum + value.cost, 0)).toBe(point.cost)
