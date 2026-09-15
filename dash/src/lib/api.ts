@@ -82,6 +82,32 @@ export type Payload = {
   history: { daily: DailyEntry[]; timeline?: GranularHistory }
 }
 
+export type CodexQuotaPoint = {
+  timestamp: string
+  remainingPercent: number
+  label: string
+  resetsAt: string | null
+}
+
+export type CodexQuota = {
+  capturedAt: string
+  connection: string
+  planLabel: string | null
+  primary: {
+    label: string
+    usedPercent: number
+    remainingPercent: number
+    resetsAt: string | null
+  } | null
+  history: CodexQuotaPoint[]
+}
+
+export async function fetchCodexQuota(period: Period): Promise<CodexQuota> {
+  const res = await fetch(`/api/quota?provider=codex&period=${encodeURIComponent(period)}`)
+  if (!res.ok) throw new Error(`Request failed (${res.status})`)
+  return res.json() as Promise<CodexQuota>
+}
+
 export async function fetchUsage(period: Period, provider: string): Promise<Payload> {
   const res = await fetch(`/api/usage?period=${encodeURIComponent(period)}&provider=${encodeURIComponent(provider)}`)
   if (!res.ok) throw new Error(`Request failed (${res.status})`)

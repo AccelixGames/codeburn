@@ -21,6 +21,8 @@ import { ShareController } from './sharing/share-controller.js'
 import { sanitizeForSharing } from './sharing/sanitize.js'
 import { buildContextTree, findClaudeSession, listRecentTitledSessions, snapshotRows, type ContextTreeResult, type SessionRef } from './context-tree.js'
 import { buildCodexContextTree, findCodexSession, listRecentCodexSessions } from './context-tree-codex.js'
+import { fetchCodexQuota } from './quota/codex.js'
+import { appendCodexQuotaPoint, codexQuotaPayload, loadCodexQuotaHistory, saveCodexQuotaHistory, selectCodexQuotaHistory, type CodexQuotaPoint } from './quota/codex-history.js'
 
 function readBody(req: import('http').IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -147,6 +149,28 @@ export async function runWebDashboard(opts: {
     return rebuildPayload(key, period, provider, from, to)
   }
 
+  // Quota is a live provider read, so keep it off the usage payload path. The
+  // dashboard asks for it only on the Graph page and the persisted samples let
+  // the area chart show an honest history across dashboard restarts.
+  let codexQuotaHistory: CodexQuotaPoint[] | undefined
+  let codexQuotaRequest: Promise<ReturnType<typeof codexQuotaPayload>> | undefined
+  const getCodexQuota = (period: string): Promise<ReturnType<typeof codexQuotaPayload>> => {
+    if (codexQuotaRequest) return codexQuotaRequest
+    codexQuotaRequest = (async () => {
+      const { quota } = await fetchCodexQuota()
+      codexQuotaHistory ??= await loadCodexQuotaHistory()
+      const nextHistory = appendCodexQuotaPoint(codexQuotaHistory, quota)
+      if (nextHistory !== codexQuotaHistory) {
+        codexQuotaHistory = nextHistory
+        await saveCodexQuotaHistory(nextHistory)
+      }
+      const periodInfo = periodInfoFromQuery({ period }, opts.period)
+      const history = selectCodexQuotaHistory(codexQuotaHistory, periodInfo.range.start.getTime(), periodInfo.range.end.getTime())
+      return codexQuotaPayload(quota, history)
+    })().finally(() => { codexQuotaRequest = undefined })
+    return codexQuotaRequest
+  }
+
   // Warm every period tab shortly after startup, sequentially, so the first
   // click on 7d/30d/Month answers from the payload cache instead of paying a
   // full parse. Lifetime is deliberately last-and-optional: it is the rarest
@@ -220,6 +244,26 @@ export async function runWebDashboard(opts: {
         let payload
         try {
           payload = await getLocalPayload(period, provider, from, to)
+        } catch (err) {
+          if (!(err instanceof UsageQueryError)) throw err
+          writeJsonError(res, 400, err.message)
+          return
+        }
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+        res.end(JSON.stringify(payload))
+        return
+      }
+
+      if (url.pathname === '/api/quota') {
+        const provider = url.searchParams.get('provider') ?? 'codex'
+        if (provider !== 'codex') {
+          writeJsonError(res, 400, 'only the codex quota is available in the dashboard')
+          return
+        }
+        const period = url.searchParams.get('period') ?? opts.period
+        let payload
+        try {
+          payload = await getCodexQuota(period)
         } catch (err) {
           if (!(err instanceof UsageQueryError)) throw err
           writeJsonError(res, 400, err.message)

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Area, Bar, BarChart, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
-import type { DailyEntry, DeviceUsage, GranularHistory } from '@/lib/api'
+import type { CodexQuota, CodexQuotaPoint, DailyEntry, DeviceUsage, GranularHistory } from '@/lib/api'
 import { CHART_COLORS, chartColorForModel, cn, compactUsd, fmtTokens, label, usd } from '@/lib/utils'
 
 export type Unit = 'cost' | 'tokens'
@@ -17,13 +17,14 @@ const MOVING_AVERAGE_POINTS = 10
 
 type Series = { key: string; label: string; color: string }
 
-function makeTooltip(labels: Record<string, string>, fmt: (n: number) => string, formatPeriod = fmtDay, totalKey?: string, totalValueKey?: string) {
+function makeTooltip(labels: Record<string, string>, fmt: (n: number) => string, formatPeriod = fmtDay, totalKey?: string, totalValueKey?: string, quotaKey?: string) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return function ChartTooltip({ active, payload, label: lbl }: any) {
     if (!active || !payload?.length) return null
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const items = payload.filter((p: any) => p.value > 0 && p.dataKey !== totalKey).sort((a: any, b: any) => b.value - a.value)
-    if (!items.length) return null
+    const items = payload.filter((p: any) => p.value > 0 && p.dataKey !== totalKey && p.dataKey !== quotaKey).sort((a: any, b: any) => b.value - a.value)
+    const quotaItem = quotaKey ? payload.find((p: any) => p.dataKey === quotaKey && typeof p.value === 'number') : undefined
+    if (!items.length && !quotaItem) return null
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const totalItem = totalKey ? payload.find((p: any) => p.dataKey === totalKey) : undefined
     const total = totalValueKey && totalItem?.payload?.[totalValueKey] != null
@@ -46,6 +47,13 @@ function makeTooltip(labels: Record<string, string>, fmt: (n: number) => string,
               <span className="tabular-nums text-muted-foreground">{fmt(p.value)}</span>
             </div>
           ))}
+          {quotaItem && (
+            <div className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 shrink-0 rounded-sm bg-lime-300/25" />
+              <span className="flex-1 truncate text-tertiary-foreground">Codex remaining</span>
+              <span className="tabular-nums text-muted-foreground">{Number(quotaItem.value).toFixed(1)}%</span>
+            </div>
+          )}
           <div className="mt-1 flex items-center justify-between border-t border-border pt-1 text-foreground">
             <span>Total</span>
             <span className="font-semibold tabular-nums">{fmt(total)}</span>
@@ -107,16 +115,54 @@ function fmtTimelineUsd(value: number | string): string {
   return '$0'
 }
 
+function interpolateQuota(timestamp: string, samples: CodexQuotaPoint[]): number | null {
+  const at = Date.parse(timestamp)
+  if (!Number.isFinite(at) || samples.length === 0) return null
+  let leftIndex = -1
+  let rightIndex = -1
+  for (let index = 0; index < samples.length; index++) {
+    const sample = samples[index]!
+    const sampleAt = Date.parse(sample.timestamp)
+    if (!Number.isFinite(sampleAt)) continue
+    if (sampleAt === at) return sample.remainingPercent
+    if (sampleAt < at) leftIndex = index
+    if (sampleAt > at) {
+      rightIndex = index
+      break
+    }
+  }
+  // Estimate the missing edges from the nearest two observations. This keeps
+  // the graph moving through the full selected range without flattening it to
+  // the current value when the usage and quota requests have different ages.
+  if (leftIndex < 0 && samples.length >= 2) {
+    leftIndex = 0
+    rightIndex = 1
+  } else if (rightIndex < 0 && samples.length >= 2) {
+    rightIndex = samples.length - 1
+    leftIndex = rightIndex - 1
+  }
+  if (leftIndex < 0 || rightIndex < 0) return null
+  const left = samples[leftIndex]!
+  const right = samples[rightIndex]!
+  const leftAt = Date.parse(left.timestamp)
+  const rightAt = Date.parse(right.timestamp)
+  if (rightAt <= leftAt) return left.remainingPercent
+  const ratio = (at - leftAt) / (rightAt - leftAt)
+  return Math.max(0, Math.min(100, left.remainingPercent + (right.remainingPercent - left.remainingPercent) * ratio))
+}
+
 function GranularLines({
   timeline,
   breakdown,
   unit,
+  quota,
 }: {
   timeline: GranularHistory
   breakdown: Breakdown
   unit: Unit
+  quota?: CodexQuota
 }) {
-  const { rows, series, labels } = useMemo(() => {
+  const { rows, series, labels, hasQuota } = useMemo(() => {
     const metadata = breakdown === 'sessions' ? timeline.sessionSeries : timeline.modelSeries
     const totals = new Map<string, number>()
     for (const point of timeline.points) {
@@ -140,8 +186,9 @@ function GranularLines({
     const hasOther = [...totals.entries()].some(([id, total]) => total > 0 && !topSet.has(id))
     const keys = hasOther ? [...top, 'display_other'] : top
     const metadataById = new Map(metadata.map(item => [item.id, item.label]))
+    const quotaHistory = [...(quota?.history ?? [])].sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))
     const rowData = timeline.points.map((point) => {
-      const row: Record<string, number | string> = { period: point.timestamp }
+      const row: Record<string, number | string | null> = { period: point.timestamp }
       for (const key of keys) row[key] = 0
       const values = breakdown === 'sessions' ? point.sessions : point.models
       for (const value of values) {
@@ -150,6 +197,9 @@ function GranularLines({
         row[key] = (row[key] as number) + (unit === 'tokens' ? value.tokens : value.cost)
       }
       row.display_total = unit === 'tokens' ? point.tokens : point.cost
+      if (quotaHistory.length) {
+        row.codex_remaining = interpolateQuota(point.timestamp, quotaHistory)
+      }
       return row
     })
     rowData.forEach((row, index) => {
@@ -192,8 +242,9 @@ function GranularLines({
       rows,
       series: chartSeries,
       labels: tooltipLabels,
+      hasQuota: quota?.primary !== null && quota?.primary !== undefined && rows.some(row => typeof row.codex_remaining === 'number'),
     }
-  }, [timeline, breakdown, unit])
+  }, [timeline, breakdown, unit, quota])
 
   if (series.length === 0) {
     return <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-tertiary-foreground">No timestamped usage in this period.</div>
@@ -201,7 +252,7 @@ function GranularLines({
 
   const fmt = unit === 'tokens' ? fmtTokens : usd
   const axisFmt = (value: number | string) => (unit === 'tokens' ? fmtTokens(Number(value)) : fmtTimelineUsd(value))
-  const Tip = makeTooltip(labels, fmt, value => fmtTimelineTooltip(value, timeline.bucketMinutes), 'display_total_ma', 'display_total')
+  const Tip = makeTooltip(labels, fmt, value => fmtTimelineTooltip(value, timeline.bucketMinutes), 'display_total_ma', 'display_total', 'codex_remaining')
   const xTickInterval = Math.max(0, Math.ceil(rows.length / 12) - 1)
 
   return (
@@ -213,11 +264,18 @@ function GranularLines({
             <span className="max-w-80 truncate" title={item.label}>{item.label}</span>
           </span>
         ))}
+        {hasQuota && (
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="h-2 w-2 shrink-0 rounded-sm bg-lime-300/20" />
+            <span className="max-w-80 truncate" title="Codex remaining quota">Codex remaining {quota?.primary?.remainingPercent.toFixed(1)}%</span>
+          </span>
+        )}
       </div>
       <div className="min-h-0 flex-1">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: -6 }}>
+          <ComposedChart data={rows} margin={{ top: 8, right: hasQuota ? 28 : 8, bottom: 0, left: -6 }}>
             <CartesianGrid vertical={false} strokeDasharray="2 2" stroke="var(--color-chart-grid-stroke)" />
+            {hasQuota && <Area type="stepAfter" dataKey="codex_remaining" yAxisId="quota" baseValue={0} stroke="none" fill="rgba(163, 230, 53, 0.10)" fillOpacity={1} connectNulls={false} isAnimationActive={false} />}
             <XAxis
               dataKey="period"
               tickLine={false}
@@ -229,6 +287,7 @@ function GranularLines({
               tickFormatter={(value) => fmtTimelineTick(String(value), timeline.bucketMinutes)}
             />
             <YAxis
+              yAxisId="usage"
               tickLine={false}
               axisLine={false}
               width={50}
@@ -241,6 +300,7 @@ function GranularLines({
                 key={item.key}
                 type="linear"
                 dataKey={item.key}
+                yAxisId="usage"
                 stroke={item.color}
                 strokeWidth={item.key === 'display_total_ma' ? 3 : 2}
                 dot={false}
@@ -248,7 +308,19 @@ function GranularLines({
                 isAnimationActive={false}
               />
             ))}
-          </LineChart>
+            {hasQuota && (
+              <YAxis
+                yAxisId="quota"
+                orientation="right"
+                domain={[0, 100]}
+                tickLine={false}
+                axisLine={false}
+                width={38}
+                tick={{ fontSize: 11, fill: 'var(--color-tertiary-foreground)' }}
+                tickFormatter={(value) => `${Number(value).toFixed(0)}%`}
+              />
+            )}
+          </ComposedChart>
         </ResponsiveContainer>
       </div>
     </div>
@@ -343,12 +415,14 @@ export function GranularUsageChart({
   daily,
   timeline,
   unit = 'cost',
+  quota,
   selectedBreakdown: controlledBreakdown,
   onBreakdownChange,
 }: {
   daily: DailyEntry[]
   timeline?: GranularHistory
   unit?: Unit
+  quota?: CodexQuota
   selectedBreakdown?: Breakdown
   onBreakdownChange?: (breakdown: Breakdown) => void
 }) {
@@ -399,7 +473,7 @@ export function GranularUsageChart({
           })}
         </div>
       </div>
-      <GranularLines timeline={timeline} breakdown={breakdown} unit={unit} />
+      <GranularLines timeline={timeline} breakdown={breakdown} unit={unit} quota={quota} />
     </div>
   )
 }

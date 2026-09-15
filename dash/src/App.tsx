@@ -3,11 +3,13 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import {
   approvePairing,
+  fetchCodexQuota,
   fetchDevices,
   PERIODS,
   shareStatus,
   startShare,
   stopShare,
+  type CodexQuota,
   type DeviceUsage,
   type Payload,
   type Period,
@@ -470,7 +472,6 @@ function GraphBreakdownTotals({ payload, breakdown, unit }: { payload: Payload; 
     )
   }
 
-  const metadata = rowMetadata
   const labels = rowLabels
   const totals = new Map<string, number>()
   for (const point of timeline.points) {
@@ -552,7 +553,7 @@ function GraphBreakdownTotals({ payload, breakdown, unit }: { payload: Payload; 
   )
 }
 
-function GraphView({ payload, unit, breakdown, onBreakdownChange }: { payload?: Payload; unit: Unit; breakdown: Breakdown; onBreakdownChange: (breakdown: Breakdown) => void }) {
+function GraphView({ payload, quota, unit, breakdown, onBreakdownChange }: { payload?: Payload; quota?: CodexQuota; unit: Unit; breakdown: Breakdown; onBreakdownChange: (breakdown: Breakdown) => void }) {
   return (
     <>
       <Card className="h-[calc(100vh-115px)] min-h-[440px] overflow-hidden max-md:h-[calc(100dvh-170px)] max-md:min-h-[360px]">
@@ -563,6 +564,7 @@ function GraphView({ payload, unit, breakdown, onBreakdownChange }: { payload?: 
           <GranularUsageChart
             daily={payload.history.daily}
             timeline={payload.history.timeline}
+            quota={quota}
             unit={unit}
             selectedBreakdown={breakdown}
             onBreakdownChange={onBreakdownChange}
@@ -889,6 +891,13 @@ export function App() {
   const label = local?.payload?.current?.label ?? ''
   const graphDevice = view === 'all' ? (local ?? devices[0]) : devices.find((d) => d.id === view)
   const graphPayload = graphDevice?.payload
+  const { data: codexQuota } = useQuery({
+    queryKey: ['codex-quota', period],
+    queryFn: () => fetchCodexQuota(period),
+    enabled: page === 'graph' && graphDevice?.local === true && (provider === 'all' || provider === 'codex'),
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: true,
+  })
 
   return (
     <div className="min-h-screen bg-outer-background p-2.5 max-md:min-h-[100dvh]">
@@ -1151,7 +1160,7 @@ export function App() {
             {page === 'context' ? (
               <ContextExplorer />
             ) : page === 'graph' ? (
-              <GraphView payload={graphPayload} unit={unit} breakdown={graphBreakdown} onBreakdownChange={setGraphBreakdown} />
+              <GraphView payload={graphPayload} quota={codexQuota} unit={unit} breakdown={graphBreakdown} onBreakdownChange={setGraphBreakdown} />
             ) : showCombined ? (
               <CombinedView devices={devices} unit={unit} />
             ) : (
