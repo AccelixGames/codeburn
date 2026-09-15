@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Area, Bar, BarChart, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
-import type { CodexQuota, CodexQuotaPoint, DailyEntry, DeviceUsage, GranularHistory } from '@/lib/api'
+import { interpolateQuota } from '@/lib/quota-history'
+import type { CodexQuota, DailyEntry, DeviceUsage, GranularHistory } from '@/lib/api'
 import { CHART_COLORS, chartColorForModel, cn, compactUsd, fmtTokens, label, usd } from '@/lib/utils'
 
 export type Unit = 'cost' | 'tokens'
@@ -17,14 +18,14 @@ const MOVING_AVERAGE_POINTS = 10
 
 type Series = { key: string; label: string; color: string }
 
-function makeTooltip(labels: Record<string, string>, fmt: (n: number) => string, formatPeriod = fmtDay, totalKey?: string, totalValueKey?: string, quotaKey?: string) {
+function makeTooltip(labels: Record<string, string>, fmt: (n: number) => string, formatPeriod = fmtDay, totalKey?: string, totalValueKey?: string, quotaKeys: string[] = []) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return function ChartTooltip({ active, payload, label: lbl }: any) {
     if (!active || !payload?.length) return null
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const items = payload.filter((p: any) => p.value > 0 && p.dataKey !== totalKey && p.dataKey !== quotaKey).sort((a: any, b: any) => b.value - a.value)
-    const quotaItem = quotaKey ? payload.find((p: any) => p.dataKey === quotaKey && typeof p.value === 'number') : undefined
-    if (!items.length && !quotaItem) return null
+    const items = payload.filter((p: any) => p.value > 0 && p.dataKey !== totalKey && !quotaKeys.includes(p.dataKey)).sort((a: any, b: any) => b.value - a.value)
+    const quotaItems = payload.filter((p: any) => quotaKeys.includes(p.dataKey) && typeof p.value === 'number')
+    if (!items.length && !quotaItems.length) return null
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const totalItem = totalKey ? payload.find((p: any) => p.dataKey === totalKey) : undefined
     const total = totalValueKey && totalItem?.payload?.[totalValueKey] != null
@@ -47,13 +48,13 @@ function makeTooltip(labels: Record<string, string>, fmt: (n: number) => string,
               <span className="tabular-nums text-muted-foreground">{fmt(p.value)}</span>
             </div>
           ))}
-          {quotaItem && (
-            <div className="flex items-center gap-2">
-              <span className="h-2.5 w-2.5 shrink-0 rounded-sm bg-lime-300/25" />
-              <span className="flex-1 truncate text-tertiary-foreground">Codex remaining</span>
+          {quotaItems.map((quotaItem: any) => (
+            <div key={quotaItem.dataKey} className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: quotaItem.color }} />
+              <span className="flex-1 truncate text-tertiary-foreground">{labels[quotaItem.dataKey]}</span>
               <span className="tabular-nums text-muted-foreground">{Number(quotaItem.value).toFixed(1)}%</span>
             </div>
-          )}
+          ))}
           <div className="mt-1 flex items-center justify-between border-t border-border pt-1 text-foreground">
             <span>Total</span>
             <span className="font-semibold tabular-nums">{fmt(total)}</span>
@@ -115,42 +116,6 @@ function fmtTimelineUsd(value: number | string): string {
   return '$0'
 }
 
-function interpolateQuota(timestamp: string, samples: CodexQuotaPoint[]): number | null {
-  const at = Date.parse(timestamp)
-  if (!Number.isFinite(at) || samples.length === 0) return null
-  let leftIndex = -1
-  let rightIndex = -1
-  for (let index = 0; index < samples.length; index++) {
-    const sample = samples[index]!
-    const sampleAt = Date.parse(sample.timestamp)
-    if (!Number.isFinite(sampleAt)) continue
-    if (sampleAt === at) return sample.remainingPercent
-    if (sampleAt < at) leftIndex = index
-    if (sampleAt > at) {
-      rightIndex = index
-      break
-    }
-  }
-  // Estimate the missing edges from the nearest two observations. This keeps
-  // the graph moving through the full selected range without flattening it to
-  // the current value when the usage and quota requests have different ages.
-  if (leftIndex < 0 && samples.length >= 2) {
-    leftIndex = 0
-    rightIndex = 1
-  } else if (rightIndex < 0 && samples.length >= 2) {
-    rightIndex = samples.length - 1
-    leftIndex = rightIndex - 1
-  }
-  if (leftIndex < 0 || rightIndex < 0) return null
-  const left = samples[leftIndex]!
-  const right = samples[rightIndex]!
-  const leftAt = Date.parse(left.timestamp)
-  const rightAt = Date.parse(right.timestamp)
-  if (rightAt <= leftAt) return left.remainingPercent
-  const ratio = (at - leftAt) / (rightAt - leftAt)
-  return Math.max(0, Math.min(100, left.remainingPercent + (right.remainingPercent - left.remainingPercent) * ratio))
-}
-
 function GranularLines({
   timeline,
   breakdown,
@@ -162,7 +127,7 @@ function GranularLines({
   unit: Unit
   quota?: CodexQuota
 }) {
-  const { rows, series, labels, hasQuota } = useMemo(() => {
+  const { rows, series, labels, hasQuota, quotaSeries } = useMemo(() => {
     const metadata = breakdown === 'sessions' ? timeline.sessionSeries : timeline.modelSeries
     const totals = new Map<string, number>()
     for (const point of timeline.points) {
@@ -187,6 +152,16 @@ function GranularLines({
     const keys = hasOther ? [...top, 'display_other'] : top
     const metadataById = new Map(metadata.map(item => [item.id, item.label]))
     const quotaHistory = [...(quota?.history ?? [])].sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))
+    const accountNames = new Map<string, string>()
+    for (const point of quotaHistory) {
+      if (point.accountId && point.accountName) accountNames.set(point.accountId, point.accountName)
+    }
+    if (quota?.accountId && quota.accountName) accountNames.set(quota.accountId, quota.accountName)
+    const quotaSeries = [...new Set(quotaHistory.map(point => point.accountId ?? null))].map((accountId, index) => ({
+      accountId, key: `codex_remaining_${index}`,
+      label: `Codex remaining · ${accountId ? accountNames.get(accountId) ?? accountId : 'Unknown account'}`,
+      color: accountId === null ? '#94a3b8' : `hsl(${[...accountId].reduce((hash, char) => (hash * 31 + char.charCodeAt(0)) >>> 0, 0) % 360}, 75%, 65%)`,
+    }))
     const rowData = timeline.points.map((point) => {
       const row: Record<string, number | string | null> = { period: point.timestamp }
       for (const key of keys) row[key] = 0
@@ -198,7 +173,7 @@ function GranularLines({
       }
       row.display_total = unit === 'tokens' ? point.tokens : point.cost
       if (quotaHistory.length) {
-        row.codex_remaining = interpolateQuota(point.timestamp, quotaHistory)
+        for (const item of quotaSeries) row[item.key] = interpolateQuota(point.timestamp, quotaHistory, item.accountId)
       }
       return row
     })
@@ -238,11 +213,13 @@ function GranularLines({
       // disambiguation; the hover card can show the human-readable title.
       return [item.key, item.label.replace(/^[^ ]+ \([^)]*\) · /, '')]
     }))
+    for (const item of quotaSeries) tooltipLabels[item.key] = item.label
     return {
       rows,
       series: chartSeries,
       labels: tooltipLabels,
-      hasQuota: quota?.primary !== null && quota?.primary !== undefined && rows.some(row => typeof row.codex_remaining === 'number'),
+      quotaSeries,
+      hasQuota: rows.some(row => quotaSeries.some(item => typeof row[item.key] === 'number')),
     }
   }, [timeline, breakdown, unit, quota])
 
@@ -252,7 +229,7 @@ function GranularLines({
 
   const fmt = unit === 'tokens' ? fmtTokens : usd
   const axisFmt = (value: number | string) => (unit === 'tokens' ? fmtTokens(Number(value)) : fmtTimelineUsd(value))
-  const Tip = makeTooltip(labels, fmt, value => fmtTimelineTooltip(value, timeline.bucketMinutes), 'display_total_ma', 'display_total', 'codex_remaining')
+  const Tip = makeTooltip(labels, fmt, value => fmtTimelineTooltip(value, timeline.bucketMinutes), 'display_total_ma', 'display_total', quotaSeries.map(item => item.key))
   const xTickInterval = Math.max(0, Math.ceil(rows.length / 12) - 1)
 
   return (
@@ -264,18 +241,18 @@ function GranularLines({
             <span className="max-w-80 truncate" title={item.label}>{item.label}</span>
           </span>
         ))}
-        {hasQuota && (
-          <span className="flex min-w-0 items-center gap-1.5">
-            <span className="h-2 w-2 shrink-0 rounded-sm bg-lime-300/20" />
-            <span className="max-w-80 truncate" title="Codex remaining quota">Codex remaining {quota?.primary?.remainingPercent.toFixed(1)}%</span>
+        {hasQuota && quotaSeries.map(item => (
+          <span key={item.key} className="flex min-w-0 items-center gap-1.5">
+            <span className="h-2 w-2 shrink-0 rounded-sm" style={{ background: item.color }} />
+            <span className="max-w-80 truncate" title={item.label}>{item.label}</span>
           </span>
-        )}
+        ))}
       </div>
       <div className="min-h-0 flex-1">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={rows} margin={{ top: 8, right: hasQuota ? 28 : 8, bottom: 0, left: -6 }}>
             <CartesianGrid vertical={false} strokeDasharray="2 2" stroke="var(--color-chart-grid-stroke)" />
-            {hasQuota && <Area type="stepAfter" dataKey="codex_remaining" yAxisId="quota" baseValue={0} stroke="none" fill="rgba(163, 230, 53, 0.10)" fillOpacity={1} connectNulls={false} isAnimationActive={false} />}
+            {hasQuota && quotaSeries.map(item => <Area key={item.key} type="stepAfter" dataKey={item.key} yAxisId="quota" baseValue={0} stroke="none" fill={item.color} fillOpacity={0.15} connectNulls={false} isAnimationActive={false} />)}
             <XAxis
               dataKey="period"
               tickLine={false}

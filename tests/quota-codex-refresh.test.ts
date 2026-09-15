@@ -79,6 +79,7 @@ describe('Codex quota credential rotation', () => {
       fetch: routes({ token: rotatedGrant, usage: usagePayload }),
     })
 
+    expect(result.quota.accountId).toBe('account-1')
     expect(result.quota.connection).toBe('connected')
     const saved = await readAuth()
     expect(saved.tokens.refresh_token).toBe(NEW_REFRESH)

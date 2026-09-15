@@ -83,6 +83,8 @@ export type Payload = {
 }
 
 export type CodexQuotaPoint = {
+  accountId?: string | null
+  accountName?: string | null
   timestamp: string
   remainingPercent: number
   label: string
@@ -90,6 +92,8 @@ export type CodexQuotaPoint = {
 }
 
 export type CodexQuota = {
+  accountId?: string | null
+  accountName?: string | null
   capturedAt: string
   connection: string
   planLabel: string | null

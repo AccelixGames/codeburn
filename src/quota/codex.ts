@@ -365,13 +365,14 @@ function str(value: unknown): string | null {
 /** The `sub` claim of a JWT id_token, or null when it is absent or does not
  * decode. Defensive at every step: a malformed id_token is evidence of nothing,
  * so it must never itself read as a login mismatch. */
-function idTokenSubject(token: unknown): string | null {
+function idTokenClaim(token: unknown, claim: 'sub' | 'name'): string | null {
   if (typeof token !== 'string') return null
   const payload = token.split('.')[1]
   if (!payload) return null
   try {
-    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { sub?: unknown }
-    return typeof claims.sub === 'string' && claims.sub ? claims.sub : null
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<string, unknown>
+    const value = claims[claim]
+    return typeof value === 'string' && value.trim() ? value.trim() : null
   } catch {
     return null
   }
@@ -390,7 +391,7 @@ function sameLogin(held: AuthDoc, latest: AuthDoc): boolean {
     typeof a === 'string' && a !== '' && typeof b === 'string' && b !== '' && a !== b
   if (differs(held.tokens?.account_id, latest.tokens?.account_id)) return false
   if (differs(held.tokens?.refresh_token, latest.tokens?.refresh_token)) return false
-  return !differs(idTokenSubject(held.tokens?.id_token), idTokenSubject(latest.tokens?.id_token))
+  return !differs(idTokenClaim(held.tokens?.id_token, 'sub'), idTokenClaim(latest.tokens?.id_token, 'sub'))
 }
 
 /** The document the rotated tokens are merged into: whatever the Codex CLI has
@@ -555,7 +556,7 @@ export async function fetchCodexQuota(options: Partial<CodexDeps> & { signal?: A
       return { quota: empty('transientFailure'), retryAfterSeconds: Math.max(Number.isFinite(seconds) ? Math.ceil(seconds) : 300, 60) }
     }
     if (!response.ok) return { quota: empty(response.status >= 400 && response.status < 500 ? 'terminalFailure' : 'transientFailure') }
-    return { quota: decodeCodexUsage(await response.json()) }
+    return { quota: { ...decodeCodexUsage(await response.json()), accountId: str(auth.tokens?.account_id) ?? idTokenClaim(auth.tokens?.id_token, 'sub'), accountName: idTokenClaim(auth.tokens?.id_token, 'name') } }
   } catch (error) {
     console.warn(`Codex quota unavailable: ${sanitizeError(error)}`)
     return { quota: empty('transientFailure') }

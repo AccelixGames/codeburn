@@ -5,6 +5,8 @@ import { getCodeburnCacheDir } from '../cache-dir.js'
 import type { QuotaProvider } from './types.js'
 
 export type CodexQuotaPoint = {
+  accountId?: string | null
+  accountName?: string | null
   timestamp: string
   remainingPercent: number
   label: string
@@ -31,7 +33,7 @@ function decodePoint(value: unknown): CodexQuotaPoint | null {
   const label = typeof raw.label === 'string' ? raw.label : null
   const resetsAt = raw.resetsAt === null || typeof raw.resetsAt === 'string' ? raw.resetsAt : null
   if (!timestamp || !Number.isFinite(Date.parse(timestamp)) || remainingPercent === null || label === null) return null
-  return { timestamp, remainingPercent, label, resetsAt }
+  return { timestamp, remainingPercent, label, resetsAt, accountId: typeof raw.accountId === 'string' && raw.accountId ? raw.accountId : null, accountName: typeof raw.accountName === 'string' && raw.accountName.trim() ? raw.accountName.trim() : null }
 }
 
 export async function loadCodexQuotaHistory(): Promise<CodexQuotaPoint[]> {
@@ -71,9 +73,9 @@ export function appendCodexQuotaPoint(points: CodexQuotaPoint[], quota: QuotaPro
   const timestamp = new Date(capturedAt).toISOString()
   const last = points[points.length - 1]
   const lastAt = last ? Date.parse(last.timestamp) : NaN
-  if (last && Number.isFinite(lastAt) && capturedAt - lastAt < SAMPLE_INTERVAL_MS && last.remainingPercent === remainingPercent) return points
+  if (last && Number.isFinite(lastAt) && capturedAt - lastAt < SAMPLE_INTERVAL_MS && last.remainingPercent === remainingPercent && (last.accountId ?? null) === (quota.accountId ?? null) && (last.accountName ?? null) === (quota.accountName ?? null)) return points
   const next = points.filter(point => point.timestamp !== timestamp)
-  next.push({ timestamp, remainingPercent, label: primary.label, resetsAt: primary.resetsAt })
+  next.push({ accountId: quota.accountId ?? null, accountName: quota.accountName ?? null, timestamp, remainingPercent, label: primary.label, resetsAt: primary.resetsAt })
   next.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))
   return next.slice(-MAX_POINTS)
 }
@@ -83,6 +85,8 @@ export function codexQuotaPayload(quota: QuotaProvider, history: CodexQuotaPoint
   return {
     capturedAt: new Date(capturedAt).toISOString(),
     connection: quota.connection,
+    accountId: quota.accountId ?? null,
+    accountName: quota.accountName ?? null,
     planLabel: quota.planLabel,
     primary: primary
       ? {
