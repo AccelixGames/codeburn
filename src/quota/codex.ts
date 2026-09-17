@@ -131,9 +131,13 @@ function windowOf(value: unknown, override?: string): QuotaWindow | null {
   const row = value as Record<string, unknown>
   const percent = fraction(row.used_percent)
   if (percent === null) return null
-  const reset = typeof row.reset_at === 'number' && Number.isFinite(row.reset_at)
-    ? new Date(row.reset_at * 1000).toISOString() : null
-  return { label: override ?? labelForSeconds(row.limit_window_seconds), percent, resetsAt: reset }
+  const resetSeconds = typeof row.reset_at === 'number' && Number.isFinite(row.reset_at) ? row.reset_at : null
+  const reset = resetSeconds !== null && resetSeconds > 0 && resetSeconds * 1000 <= 8.64e15
+    ? new Date(resetSeconds * 1000).toISOString() : null
+  const windowSeconds = typeof row.limit_window_seconds === 'number'
+    && Number.isFinite(row.limit_window_seconds) && row.limit_window_seconds > 0
+    ? Math.trunc(row.limit_window_seconds) : undefined
+  return { label: override ?? labelForSeconds(row.limit_window_seconds), percent, resetsAt: reset, ...(windowSeconds ? { windowSeconds } : {}) }
 }
 
 // chatgpt.com mixes encodings inside one payload. `Number('')` is 0, not NaN,

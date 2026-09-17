@@ -102,6 +102,7 @@ export type CodexQuota = {
     usedPercent: number
     remainingPercent: number
     resetsAt: string | null
+    windowSeconds: number | null
   } | null
   history: CodexQuotaPoint[]
 }
@@ -128,7 +129,7 @@ export type DeviceUsage = {
 
 declare global {
   interface Window {
-    __CODEBURN_BOOTSTRAP__?: { devices: DeviceUsage[] }
+    __CODEBURN_BOOTSTRAP__?: { devices: DeviceUsage[]; codexQuota?: CodexQuota }
   }
 }
 

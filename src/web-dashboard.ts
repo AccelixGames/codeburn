@@ -150,14 +150,17 @@ export async function runWebDashboard(opts: {
   }
 
   // Quota is a live provider read, so keep it off the usage payload path. The
-  // dashboard asks for it only on the Graph page and the persisted samples let
-  // the area chart show an honest history across dashboard restarts.
+  // dashboard asks for it only on the Graph page; a short cache makes period
+  // changes instant while the persisted samples let the area chart show an
+  // honest history across dashboard restarts.
   let codexQuotaHistory: CodexQuotaPoint[] | undefined
   let codexQuotaRequest: Promise<ReturnType<typeof codexQuotaPayload>> | undefined
+  let codexQuotaSnapshot: Awaited<ReturnType<typeof fetchCodexQuota>>['quota'] | undefined
+  let codexQuotaSnapshotAt = 0
+  const CODEX_QUOTA_CACHE_TTL_MS = 60_000
   const getCodexQuota = (period: string): Promise<ReturnType<typeof codexQuotaPayload>> => {
     if (codexQuotaRequest) return codexQuotaRequest
-    codexQuotaRequest = (async () => {
-      const { quota } = await fetchCodexQuota()
+    const buildPayload = async (quota: Awaited<ReturnType<typeof fetchCodexQuota>>['quota']): Promise<ReturnType<typeof codexQuotaPayload>> => {
       codexQuotaHistory ??= await loadCodexQuotaHistory()
       const nextHistory = appendCodexQuotaPoint(codexQuotaHistory, quota)
       if (nextHistory !== codexQuotaHistory) {
@@ -167,6 +170,15 @@ export async function runWebDashboard(opts: {
       const periodInfo = periodInfoFromQuery({ period }, opts.period)
       const history = selectCodexQuotaHistory(codexQuotaHistory, periodInfo.range.start.getTime(), periodInfo.range.end.getTime())
       return codexQuotaPayload(quota, history)
+    }
+    if (codexQuotaSnapshot && Date.now() - codexQuotaSnapshotAt < CODEX_QUOTA_CACHE_TTL_MS) {
+      return buildPayload(codexQuotaSnapshot)
+    }
+    codexQuotaRequest = (async () => {
+      const { quota } = await fetchCodexQuota()
+      codexQuotaSnapshot = quota
+      codexQuotaSnapshotAt = Date.now()
+      return buildPayload(quota)
     })().finally(() => { codexQuotaRequest = undefined })
     return codexQuotaRequest
   }
@@ -211,9 +223,12 @@ export async function runWebDashboard(opts: {
   // network wait, and paired devices stream in via the live fetch right after.
   const serveIndexHtml = async (res: import('http').ServerResponse, filePath: string): Promise<void> => {
     const html = await readFile(filePath, 'utf8')
-    const payload = await getLocalPayload(opts.period, opts.provider, opts.from, opts.to)
+    const [payload, codexQuota] = await Promise.all([
+      getLocalPayload(opts.period, opts.provider, opts.from, opts.to),
+      getCodexQuota(opts.period).catch(() => undefined),
+    ])
     const devices = [{ id: 'local', name: hostname(), local: true, payload }]
-    const injected = injectDashboardBootstrap(html, { devices })
+    const injected = injectDashboardBootstrap(html, { devices, ...(codexQuota ? { codexQuota } : {}) })
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
     res.end(injected)
   }

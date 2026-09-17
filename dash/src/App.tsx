@@ -11,6 +11,7 @@ import {
   stopShare,
   type CodexQuota,
   type DeviceUsage,
+  type GranularHistory,
   type Payload,
   type Period,
 } from '@/lib/api'
@@ -553,7 +554,7 @@ function GraphBreakdownTotals({ payload, breakdown, unit }: { payload: Payload; 
   )
 }
 
-function GraphView({ payload, quota, unit, breakdown, onBreakdownChange }: { payload?: Payload; quota?: CodexQuota; unit: Unit; breakdown: Breakdown; onBreakdownChange: (breakdown: Breakdown) => void }) {
+function GraphView({ payload, quota, safeTimeline, unit, breakdown, onBreakdownChange }: { payload?: Payload; quota?: CodexQuota; safeTimeline?: GranularHistory; unit: Unit; breakdown: Breakdown; onBreakdownChange: (breakdown: Breakdown) => void }) {
   return (
     <>
       <Card className="h-[calc(100vh-115px)] min-h-[440px] overflow-hidden max-md:h-[calc(100dvh-170px)] max-md:min-h-[360px]">
@@ -565,6 +566,7 @@ function GraphView({ payload, quota, unit, breakdown, onBreakdownChange }: { pay
             daily={payload.history.daily}
             timeline={payload.history.timeline}
             quota={quota}
+            safeTimeline={safeTimeline}
             unit={unit}
             selectedBreakdown={breakdown}
             onBreakdownChange={onBreakdownChange}
@@ -894,11 +896,16 @@ export function App() {
   const { data: codexQuota } = useQuery({
     queryKey: ['codex-quota', period],
     queryFn: () => fetchCodexQuota(period),
+    initialData: () => window.__CODEBURN_BOOTSTRAP__?.codexQuota,
+    initialDataUpdatedAt: 0,
+    // The primary weekly quota is period-independent. Keep the last known
+    // reading visible while the period-specific history refreshes, so the
+    // safe-usage line never disappears during Today/Day/7 days changes.
+    placeholderData: (previous) => previous,
     enabled: page === 'graph' && graphDevice?.local === true && (provider === 'all' || provider === 'codex'),
     refetchInterval: 60_000,
     refetchIntervalInBackground: true,
   })
-
   return (
     <div className="min-h-screen bg-outer-background p-2.5 max-md:min-h-[100dvh]">
       <div className="flex h-[calc(100vh-20px)] flex-col gap-2.5 max-md:h-[calc(100dvh-20px)]">
@@ -1160,7 +1167,14 @@ export function App() {
             {page === 'context' ? (
               <ContextExplorer />
             ) : page === 'graph' ? (
-              <GraphView payload={graphPayload} quota={codexQuota} unit={unit} breakdown={graphBreakdown} onBreakdownChange={setGraphBreakdown} />
+              <GraphView
+                payload={graphPayload}
+                quota={graphDevice?.local === true ? codexQuota : undefined}
+                safeTimeline={graphDevice?.local === true ? graphPayload?.history.timeline : undefined}
+                unit={unit}
+                breakdown={graphBreakdown}
+                onBreakdownChange={setGraphBreakdown}
+              />
             ) : showCombined ? (
               <CombinedView devices={devices} unit={unit} />
             ) : (

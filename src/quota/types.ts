@@ -2,6 +2,8 @@ export type QuotaWindow = {
   label: string
   percent: number
   resetsAt: string | null
+  /** Provider-reported duration of this quota window, in seconds. */
+  windowSeconds?: number
 }
 
 export type QuotaProvider = {

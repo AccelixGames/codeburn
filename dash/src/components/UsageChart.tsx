@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Area, Bar, BarChart, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
 import { interpolateQuota } from '@/lib/quota-history'
+import { computeQuotaSafeAverage } from '@/lib/quota-budget'
 import type { CodexQuota, DailyEntry, DeviceUsage, GranularHistory } from '@/lib/api'
 import { CHART_COLORS, chartColorForModel, cn, compactUsd, fmtTokens, label, usd } from '@/lib/utils'
 
@@ -18,14 +19,15 @@ const MOVING_AVERAGE_POINTS = 10
 
 type Series = { key: string; label: string; color: string }
 
-function makeTooltip(labels: Record<string, string>, fmt: (n: number) => string, formatPeriod = fmtDay, totalKey?: string, totalValueKey?: string, quotaKeys: string[] = []) {
+function makeTooltip(labels: Record<string, string>, fmt: (n: number) => string, formatPeriod = fmtDay, totalKey?: string, totalValueKey?: string, quotaKeys: string[] = [], safeAverageKey?: string) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return function ChartTooltip({ active, payload, label: lbl }: any) {
     if (!active || !payload?.length) return null
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const items = payload.filter((p: any) => p.value > 0 && p.dataKey !== totalKey && !quotaKeys.includes(p.dataKey)).sort((a: any, b: any) => b.value - a.value)
+    const items = payload.filter((p: any) => p.value > 0 && p.dataKey !== totalKey && !quotaKeys.includes(p.dataKey) && p.dataKey !== safeAverageKey).sort((a: any, b: any) => b.value - a.value)
     const quotaItems = payload.filter((p: any) => quotaKeys.includes(p.dataKey) && typeof p.value === 'number')
-    if (!items.length && !quotaItems.length) return null
+    const safeAverageItems = safeAverageKey ? payload.filter((p: any) => p.dataKey === safeAverageKey && typeof p.value === 'number') : []
+    if (!items.length && !quotaItems.length && !safeAverageItems.length) return null
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const totalItem = totalKey ? payload.find((p: any) => p.dataKey === totalKey) : undefined
     const total = totalValueKey && totalItem?.payload?.[totalValueKey] != null
@@ -53,6 +55,13 @@ function makeTooltip(labels: Record<string, string>, fmt: (n: number) => string,
               <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: quotaItem.color }} />
               <span className="flex-1 truncate text-tertiary-foreground">{labels[quotaItem.dataKey]}</span>
               <span className="tabular-nums text-muted-foreground">{Number(quotaItem.value).toFixed(1)}%</span>
+            </div>
+          ))}
+          {safeAverageItems.map((safeItem: any) => (
+            <div key={safeItem.dataKey} className="flex items-center gap-2">
+              <span className="h-0 w-2.5 shrink-0 border-t-2 border-dashed" style={{ borderColor: safeItem.color }} />
+              <span className="flex-1 truncate text-tertiary-foreground">{labels[safeItem.dataKey]}</span>
+              <span className="tabular-nums text-muted-foreground">{fmt(safeItem.value)} / bucket</span>
             </div>
           ))}
           <div className="mt-1 flex items-center justify-between border-t border-border pt-1 text-foreground">
@@ -97,6 +106,12 @@ function fmtTimelineTooltip(value: string, bucketMinutes: number): string {
   return `${day}, ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
 }
 
+function formatResetAt(value: string): string {
+  const d = new Date(value)
+  if (!Number.isFinite(d.getTime())) return value
+  return `${d.getMonth() + 1}/${d.getDate()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+}
+
 function bucketLabel(bucketMinutes: number): string {
   if (bucketMinutes >= 1440) return 'Daily buckets'
   if (bucketMinutes >= 60) return 'Hourly buckets'
@@ -121,13 +136,15 @@ function GranularLines({
   breakdown,
   unit,
   quota,
+  safeTimeline,
 }: {
   timeline: GranularHistory
   breakdown: Breakdown
   unit: Unit
   quota?: CodexQuota
+  safeTimeline?: GranularHistory
 }) {
-  const { rows, series, labels, hasQuota, quotaSeries } = useMemo(() => {
+  const { rows, series, labels, hasQuota, quotaSeries, safeAverage, safeAverageKey } = useMemo(() => {
     const metadata = breakdown === 'sessions' ? timeline.sessionSeries : timeline.modelSeries
     const totals = new Map<string, number>()
     for (const point of timeline.points) {
@@ -177,6 +194,9 @@ function GranularLines({
       }
       return row
     })
+    const safeAverage = computeQuotaSafeAverage(safeTimeline, quota, unit)
+    const safeAverageKey = 'quota_safe_average'
+    if (safeAverage) for (const row of rowData) row[safeAverageKey] = safeAverage.value
     rowData.forEach((row, index) => {
       const start = Math.max(0, index - MOVING_AVERAGE_POINTS + 1)
       const values = rowData.slice(start, index + 1).map(item => Number(item.display_total ?? 0))
@@ -214,14 +234,17 @@ function GranularLines({
       return [item.key, item.label.replace(/^[^ ]+ \([^)]*\) · /, '')]
     }))
     for (const item of quotaSeries) tooltipLabels[item.key] = item.label
+    if (safeAverage) tooltipLabels[safeAverageKey] = `Safe usage until reset · Codex · ${formatResetAt(safeAverage.resetAt)}`
     return {
       rows,
       series: chartSeries,
       labels: tooltipLabels,
       quotaSeries,
       hasQuota: rows.some(row => quotaSeries.some(item => typeof row[item.key] === 'number')),
+      safeAverage,
+      safeAverageKey,
     }
-  }, [timeline, breakdown, unit, quota])
+  }, [timeline, breakdown, unit, quota, safeTimeline])
 
   if (series.length === 0) {
     return <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-tertiary-foreground">No timestamped usage in this period.</div>
@@ -229,7 +252,7 @@ function GranularLines({
 
   const fmt = unit === 'tokens' ? fmtTokens : usd
   const axisFmt = (value: number | string) => (unit === 'tokens' ? fmtTokens(Number(value)) : fmtTimelineUsd(value))
-  const Tip = makeTooltip(labels, fmt, value => fmtTimelineTooltip(value, timeline.bucketMinutes), 'display_total_ma', 'display_total', quotaSeries.map(item => item.key))
+  const Tip = makeTooltip(labels, fmt, value => fmtTimelineTooltip(value, timeline.bucketMinutes), 'display_total_ma', 'display_total', quotaSeries.map(item => item.key), safeAverageKey)
   const xTickInterval = Math.max(0, Math.ceil(rows.length / 12) - 1)
 
   return (
@@ -247,6 +270,14 @@ function GranularLines({
             <span className="max-w-80 truncate" title={item.label}>{item.label}</span>
           </span>
         ))}
+        {safeAverage && (
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="h-0 w-2.5 shrink-0 border-t-2 border-dashed border-foreground/60" />
+            <span className="max-w-80 truncate" title={labels[safeAverageKey]}>
+              Safe usage until reset · Codex · {fmt(safeAverage.value)} / bucket · {formatResetAt(safeAverage.resetAt)}
+            </span>
+          </span>
+        )}
       </div>
       <div className="min-h-0 flex-1">
         <ResponsiveContainer width="100%" height="100%">
@@ -285,6 +316,18 @@ function GranularLines({
                 isAnimationActive={false}
               />
             ))}
+            {safeAverage && (
+              <Line
+                dataKey={safeAverageKey}
+                yAxisId="usage"
+                stroke="rgba(255, 255, 255, 0.75)"
+                strokeWidth={2}
+                strokeDasharray="6 4"
+                dot={false}
+                activeDot={false}
+                isAnimationActive={false}
+              />
+            )}
             {hasQuota && (
               <YAxis
                 yAxisId="quota"
@@ -393,6 +436,7 @@ export function GranularUsageChart({
   timeline,
   unit = 'cost',
   quota,
+  safeTimeline,
   selectedBreakdown: controlledBreakdown,
   onBreakdownChange,
 }: {
@@ -400,6 +444,7 @@ export function GranularUsageChart({
   timeline?: GranularHistory
   unit?: Unit
   quota?: CodexQuota
+  safeTimeline?: GranularHistory
   selectedBreakdown?: Breakdown
   onBreakdownChange?: (breakdown: Breakdown) => void
 }) {
@@ -450,7 +495,7 @@ export function GranularUsageChart({
           })}
         </div>
       </div>
-      <GranularLines timeline={timeline} breakdown={breakdown} unit={unit} quota={quota} />
+      <GranularLines timeline={timeline} breakdown={breakdown} unit={unit} quota={quota} safeTimeline={safeTimeline} />
     </div>
   )
 }

@@ -43,6 +43,18 @@ describe('Codex quota', () => {
     expect(quota.details.map(row => row.label)).toEqual(['5-hour', 'Weekly'])
     expect(quota.primary?.percent).toBe(0.12)
     expect(quota.primary?.resetsAt).toBe('2025-10-09T08:53:20.000Z')
+    expect(quota.primary?.windowSeconds).toBe(18_000)
+    expect(quota.details[1]?.windowSeconds).toBe(604_800)
+  })
+
+  it('drops invalid or out-of-range reset timestamps without throwing', () => {
+    for (const reset_at of [0, -1, Number.POSITIVE_INFINITY, 8.64e15 / 1000 + 1]) {
+      const quota = decodeCodexUsage({
+        rate_limit: { primary_window: { used_percent: 12, limit_window_seconds: 18_000, reset_at } },
+      })
+      expect(quota.primary?.resetsAt).toBeNull()
+      expect(quota.primary?.windowSeconds).toBe(18_000)
+    }
   })
 
   it('reports disconnected when no auth file exists', async () => {

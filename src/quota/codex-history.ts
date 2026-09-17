@@ -94,6 +94,7 @@ export function codexQuotaPayload(quota: QuotaProvider, history: CodexQuotaPoint
           usedPercent: Math.round(Math.max(0, Math.min(1, primary.percent)) * 1000) / 10,
           remainingPercent: Math.round(Math.max(0, Math.min(1, 1 - primary.percent)) * 1000) / 10,
           resetsAt: primary.resetsAt,
+          windowSeconds: primary.windowSeconds ?? null,
         }
       : null,
     history,
